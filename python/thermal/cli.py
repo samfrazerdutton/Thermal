@@ -9,6 +9,7 @@ from typing import Optional
 
 import typer
 
+from analysis.baseline import InsufficientSamplesError, compute_baseline
 from thermal.doctor import CheckStatus, core_ready, run_doctor
 from thermal.hardware import collect_hardware_report
 from thermal.telemetry import TelemetryCollector
@@ -43,6 +44,8 @@ def workload_list() -> None:
 def workload_run(
     name: str = typer.Argument(..., help="workload name, e.g. matmul"),
     param: list[str] = typer.Option([], "--param", "-p", help="key=value, repeatable"),
+    samples: Optional[int] = typer.Option(None, "--samples", help="override measured iteration count"),
+    warmup: Optional[int] = typer.Option(None, "--warmup", help="override warmup iteration count"),
     output: Optional[Path] = typer.Option(None, "--output", help="write per-iteration metrics as JSON"),
 ) -> None:
     """Run one workload: warmup iterations, then measured iterations."""
@@ -67,15 +70,33 @@ def workload_run(
         raise typer.Exit(code=1)
 
     instance = workload_cls(params)
+    if samples is not None or warmup is not None:
+        instance.spec = instance.spec.__class__(
+            **{
+                **instance.spec.__dict__,
+                "warmup_iterations": warmup if warmup is not None else instance.spec.warmup_iterations,
+                "measurement_iterations": samples if samples is not None else instance.spec.measurement_iterations,
+            }
+        )
+
     typer.echo(f"Running '{name}' - warmup={instance.spec.warmup_iterations} measured={instance.spec.measurement_iterations}")
     result = run_workload(instance)
 
-    typer.echo(f"Device: {result.device}")
-    keys = [k for k in result.per_iteration_metrics[0] if k != "device"]
-    for key in keys:
+    typer.echo(f"\nBASELINE\nDevice: {result.device}\n")
+    numeric_keys = [
+        k
+        for k in result.per_iteration_metrics[0]
+        if k != "device" and isinstance(result.per_iteration_metrics[0].get(k), (int, float))
+    ]
+    for key in numeric_keys:
         values = [m[key] for m in result.per_iteration_metrics if isinstance(m.get(key), (int, float))]
-        if values:
-            typer.echo(f"  {key}: mean={sum(values) / len(values):.4f}  min={min(values):.4f}  max={max(values):.4f}")
+        try:
+            baseline = compute_baseline(values, metric_name=key)
+        except InsufficientSamplesError as exc:
+            typer.echo(f"{key}: {exc}\n")
+            continue
+        typer.echo(baseline.summary_text())
+        typer.echo()
 
     if output is not None:
         output.write_text(jsonlib.dumps([m for m in result.per_iteration_metrics], indent=2))
