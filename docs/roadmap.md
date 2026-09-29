@@ -15,7 +15,7 @@ before the next begins — no phase is "done" because its files exist.
 | 7 | CUDA benchmark suite (native/cuda kernel lab) | Done (vector_add, reduction, matmul: naive + optimized variants) |
 | 8 | Experiment engine (controlled A/B, randomization policy) | Done |
 | 9 | Counterfactual engine (hypothesis generation from bottleneck class) | Done |
-| 10 | Causal graph (evidence-linked, not correlation-only) | Not started |
+| 10 | Causal graph (evidence-linked, not correlation-only) | Done |
 | 11 | Optimization search (grid/binary/coordinate descent, optional Bayesian) | Not started |
 | 12 | FastAPI service | Not started |
 | 13 | React web console | Not started |

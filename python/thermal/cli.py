@@ -13,6 +13,7 @@ from typing import Optional
 import typer
 
 from analysis.baseline import InsufficientSamplesError, compute_baseline
+from thermal.causal import build_graph_from_experiments
 from thermal.counterfactual import experiment_command_for, generate_hypotheses
 from thermal.diagnosis import BottleneckClass, classify, features_from_telemetry
 from thermal.doctor import CheckStatus, core_ready, run_doctor
@@ -505,6 +506,47 @@ def experiment_compare(experiment_id: str) -> None:
         )
     typer.echo(f"n = {exp.repetitions}\n")
     typer.echo(f"VERDICT:\n{exp.verdict}")
+
+
+@experiment_app.command("causal-graph")
+def experiment_causal_graph(
+    workload: Optional[str] = typer.Option(None, "--workload", help="restrict to one workload's experiments"),
+    path_from: Optional[str] = typer.Option(None, "--path-from", help="show the causal path from this parameter"),
+    path_to: Optional[str] = typer.Option(None, "--path-to", help="...to this metric (requires --path-from)"),
+) -> None:
+    """Build and print the causal graph derived from stored experiments.
+
+    Every edge came from an experiment whose confidence interval excluded
+    zero -- an INCONCLUSIVE experiment asserts no edge at all.
+    """
+    repo = ExperimentRepository(default_db_path())
+    experiments = repo.list(workload_name=workload, limit=1000)
+    graph = build_graph_from_experiments(experiments)
+
+    if not graph.edges():
+        typer.echo("No causal edges yet -- run experiments with a clear (non-inconclusive) result first.")
+        return
+
+    if path_from is not None:
+        if path_to is None:
+            typer.echo("--path-to is required with --path-from")
+            raise typer.Exit(code=1)
+        path = graph.path(path_from, path_to)
+        if path is None:
+            typer.echo(f"No causal path found from '{path_from}' to '{path_to}'.")
+            raise typer.Exit(code=1)
+        typer.echo(f"{path_from}")
+        for edge in path:
+            arrow = "-> (+)" if edge.relationship.value == "positive" else "-> (-)"
+            typer.echo(f"    {arrow} {edge.target}   [{edge.evidence_kind.value}, {edge.percent_change:+.1f}%]")
+        return
+
+    typer.echo("CAUSAL GRAPH (from experimental evidence only)\n")
+    for edge in graph.edges():
+        typer.echo(
+            f"  {edge.source} --[{edge.relationship.value}, {edge.evidence_kind.value}]--> {edge.target}"
+            f"  ({edge.percent_change:+.1f}%, experiment {edge.experiment_id})"
+        )
 
 
 database_app = typer.Typer(help="Inspect stored runs (SQLite local mode).", no_args_is_help=True)
