@@ -64,6 +64,7 @@ Currently implemented:
 - **Phase 13 — Web console** (`apps/web`; React/TypeScript/Vite/Tailwind, dark instrument-panel design, live against the real API — no mock data path)
 - **Phase 14 — Live experiment streaming** (`/api/ws/workloads/run`, `/api/ws/experiments/run`; a run started from the Workloads page streams real events — run_started, warmup, iteration_completed, telemetry_update, diagnosis_updated, run_completed — over a WebSocket as they happen, verified end-to-end with a real browser click-through)
 - **Phase 15 — Report generation** (`thermal report <run_id|experiment_id>`, `GET /api/reports/:id`, and a Reports page in the web console — a Markdown report built entirely from what was already recorded, never recomputed, including a literal reproduction command)
+- **Phase 16 — Optional AI explanation layer** (`thermal explain`, `GET /api/explain/:id`, an "explain with AI" button in the web console — grounded strictly in the stored evidence JSON, instructed never to state a number outside it; works honestly with no API key: everything else in THERMAL requires no LLM at all)
 
 Everything else in the CLI surface exists as an explicit `NOT IMPLEMENTED` stub rather
 than a fake success message — see [`docs/roadmap.md`](docs/roadmap.md) for what's next.

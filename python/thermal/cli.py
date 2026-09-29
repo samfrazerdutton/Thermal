@@ -17,6 +17,7 @@ from thermal.counterfactual import experiment_command_for, generate_hypotheses
 from thermal.diagnosis import BottleneckClass
 from thermal.doctor import CheckStatus, core_ready, run_doctor
 from thermal.hardware import collect_hardware_report
+from thermal.ai import AIExplainer, AIUnavailableError, explain_record
 from thermal.optimization import grid_search
 from thermal.report import generate_report
 from thermal.native_bench import (
@@ -614,6 +615,37 @@ def report(
         typer.echo(f"Wrote report -> {output}")
     else:
         typer.echo(markdown)
+
+
+@app.command()
+def explain(record_id: str = typer.Argument("latest", help="run id, experiment id, or 'latest' (most recent run)")) -> None:
+    """Optional AI explanation of a run's diagnosis or an experiment's result.
+
+    Never invents a number: the model only sees the evidence already stored
+    for this record and is instructed to say so if something isn't in it.
+    Requires ANTHROPIC_API_KEY -- everything else in THERMAL works without
+    this command.
+    """
+    if record_id == "latest":
+        run = _resolve_run("latest")
+        record_id = run.run_id
+
+    explainer = AIExplainer.from_env()
+    if not explainer.available:
+        typer.echo(
+            "AI explanation layer is not configured -- set ANTHROPIC_API_KEY to enable it.\n"
+            "Everything else (diagnosis, experiments, reports) works without it."
+        )
+        raise typer.Exit(code=2)
+
+    try:
+        typer.echo(explain_record(explainer, record_id))
+    except KeyError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    except AIUnavailableError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=2)
 
 
 _NOT_IMPLEMENTED = [

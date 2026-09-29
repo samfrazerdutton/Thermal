@@ -166,3 +166,10 @@ def test_report_endpoint_returns_markdown_for_real_run(client):
     assert response.headers["content-type"].startswith("text/plain")
     assert "# THERMAL Report" in response.text
     assert run_id in response.text
+
+
+def test_explain_endpoint_returns_503_when_ai_not_configured(client, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    response = client.get("/api/explain/some-id")
+    assert response.status_code == 503
+    assert "ANTHROPIC_API_KEY" in response.json()["detail"]

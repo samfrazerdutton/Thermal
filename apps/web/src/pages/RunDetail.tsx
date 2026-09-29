@@ -1,5 +1,6 @@
 import { Link, useParams } from "react-router-dom";
 import { ErrorState, LoadingState } from "../components/AsyncState";
+import { ExplainButton } from "../components/ExplainButton";
 import { Panel } from "../components/Panel";
 import { StatValue } from "../components/StatValue";
 import { api } from "../lib/api";
@@ -65,6 +66,10 @@ export function RunDetail({ focusDiagnosis = false }: { focusDiagnosis?: boolean
               Not measurable on this run: {diagnosis.missing_features.join(", ").replace(/_/g, " ")}
             </p>
           )}
+
+          <div className="mt-4 border-t border-[var(--color-hairline)] pt-3">
+            <ExplainButton id={run.run_id} />
+          </div>
         </Panel>
       )}
 

@@ -26,6 +26,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-cov", "ninja>=1.11", "httpx>=0.27"]
+# Optional AI explanation layer (Phase 16) -- everything else in THERMAL
+# works without this and without ANTHROPIC_API_KEY set.
+ai = ["anthropic>=0.30"]
 
 [project.scripts]
 thermal = "thermal.cli:main"

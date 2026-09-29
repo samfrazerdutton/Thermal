@@ -27,6 +27,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
 
 from api.schemas import ExperimentRunRequest, OptimizeGridSearchRequest, WorkloadRunRequest
+from thermal.ai import AIExplainer, explain_record
 from thermal.causal import build_graph_from_experiments
 from thermal.hardware import collect_hardware_report
 from thermal.optimization import grid_search
@@ -344,5 +345,22 @@ def list_benchmarks(limit: int = 50) -> list[dict]:
 def get_report(report_id: str) -> str:
     try:
         return generate_report(report_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/api/explain/{record_id}")
+def get_explanation(record_id: str) -> dict:
+    """Optional AI layer (Phase 16). 503 -- not 500 -- when ANTHROPIC_API_KEY
+    isn't set: this is an expected, documented mode, not a server error."""
+    explainer = AIExplainer.from_env()
+    if not explainer.available:
+        raise HTTPException(
+            status_code=503,
+            detail="AI explanation layer is not configured (ANTHROPIC_API_KEY not set). "
+            "Diagnosis, experiments, and reports all work without it.",
+        )
+    try:
+        return {"explanation": explain_record(explainer, record_id)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

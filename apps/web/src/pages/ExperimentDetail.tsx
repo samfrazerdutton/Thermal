@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router-dom";
 import { CartesianGrid, Legend, Scatter, ScatterChart, Tooltip, XAxis, YAxis } from "recharts";
 import { ErrorState, LoadingState } from "../components/AsyncState";
+import { ExplainButton } from "../components/ExplainButton";
 import { Panel } from "../components/Panel";
 import { StatValue } from "../components/StatValue";
 import { VerdictBadge } from "../components/VerdictBadge";
@@ -113,6 +114,9 @@ export function ExperimentDetail() {
               ))}
             </div>
           )}
+          <div className="mt-4 border-t border-[var(--color-hairline)] pt-3">
+            <ExplainButton id={exp.experiment_id} />
+          </div>
         </Panel>
 
         <Panel title="Configuration">
