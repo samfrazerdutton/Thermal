@@ -19,6 +19,7 @@ from thermal.diagnosis import BottleneckClass, classify, features_from_telemetry
 from thermal.doctor import CheckStatus, core_ready, run_doctor
 from thermal.experiment import ExperimentSpec, run_experiment
 from thermal.hardware import collect_hardware_report
+from thermal.optimization import grid_search
 from thermal.native_bench import (
     KERNEL_NAMES,
     KernelBenchFailedError,
@@ -40,6 +41,17 @@ from thermal.telemetry import TelemetryCollector
 from thermal.workload import WorkloadRegistry, run_workload
 
 
+def _parse_scalar(value: str):
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
 def _parse_params(param: list[str]) -> dict:
     params: dict = {}
     for item in param:
@@ -47,13 +59,7 @@ def _parse_params(param: list[str]) -> dict:
             typer.echo(f"invalid --param '{item}', expected key=value")
             raise typer.Exit(code=1)
         key, value = item.split("=", 1)
-        try:
-            params[key] = int(value)
-        except ValueError:
-            try:
-                params[key] = float(value)
-            except ValueError:
-                params[key] = value
+        params[key] = _parse_scalar(value)
     return params
 
 
@@ -549,6 +555,36 @@ def experiment_causal_graph(
         )
 
 
+@app.command()
+def optimize(
+    workload: str = typer.Argument(..., help="workload name, e.g. matmul"),
+    param: str = typer.Option(..., "--param", help="parameter name to search"),
+    values: str = typer.Option(..., "--values", help="comma-separated candidate values, e.g. 128,512,1024"),
+    baseline_param: list[str] = typer.Option([], "--baseline-param", help="key=value, repeatable"),
+    metric: str = typer.Option(..., "--metric", help="metric to optimize, e.g. gflops"),
+    repetitions: int = typer.Option(10, "--repetitions"),
+    warmup: int = typer.Option(2, "--warmup"),
+    lower_is_better: bool = typer.Option(False, "--lower-is-better"),
+) -> None:
+    """Grid search one parameter: each candidate is a real controlled experiment
+    against the shared baseline (never a single noisy run compared to another)."""
+    baseline_params = _parse_params(list(baseline_param))
+    candidate_values = [_parse_scalar(v) for v in values.split(",")]
+
+    typer.echo(f"Searching {param} in {values} for workload '{workload}', metric '{metric}'...\n")
+    result = grid_search(
+        workload_name=workload,
+        baseline_params=baseline_params,
+        param_name=param,
+        candidate_values=candidate_values,
+        metric_name=metric,
+        higher_is_better=not lower_is_better,
+        repetitions=repetitions,
+        warmup_iterations=warmup,
+    )
+    typer.echo(result.summary_text())
+
+
 database_app = typer.Typer(help="Inspect stored runs (SQLite local mode).", no_args_is_help=True)
 app.add_typer(database_app, name="database")
 
@@ -651,7 +687,6 @@ def diagnose(run_id: str = typer.Argument("latest", help="run id, or 'latest'"))
 
 
 _NOT_IMPLEMENTED = [
-    "optimize",
     "report",
     "serve",
     "similar",
