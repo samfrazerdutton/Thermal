@@ -12,12 +12,74 @@ import typer
 from thermal.doctor import CheckStatus, core_ready, run_doctor
 from thermal.hardware import collect_hardware_report
 from thermal.telemetry import TelemetryCollector
+from thermal.workload import WorkloadRegistry, run_workload
+
+import workloads  # noqa: F401  (import registers all built-in workloads)
 
 app = typer.Typer(
     name="thermal",
     help="THERMAL: closed-loop performance engineering for AI and accelerated workloads.",
     no_args_is_help=True,
 )
+
+workload_app = typer.Typer(help="Run and inspect THERMAL workloads.", no_args_is_help=True)
+app.add_typer(workload_app, name="workload")
+
+
+@workload_app.command("list")
+def workload_list() -> None:
+    """List registered workloads."""
+    specs = WorkloadRegistry.list()
+    typer.echo("THERMAL WORKLOADS\n")
+    for spec in specs:
+        typer.echo(f"{spec.name} (v{spec.version})")
+        typer.echo(f"  {spec.description}")
+        typer.echo(f"  default params: {spec.default_parameters}")
+        typer.echo(f"  warmup={spec.warmup_iterations} measured={spec.measurement_iterations}")
+        typer.echo()
+
+
+@workload_app.command("run")
+def workload_run(
+    name: str = typer.Argument(..., help="workload name, e.g. matmul"),
+    param: list[str] = typer.Option([], "--param", "-p", help="key=value, repeatable"),
+    output: Optional[Path] = typer.Option(None, "--output", help="write per-iteration metrics as JSON"),
+) -> None:
+    """Run one workload: warmup iterations, then measured iterations."""
+    params: dict = {}
+    for item in param:
+        if "=" not in item:
+            typer.echo(f"invalid --param '{item}', expected key=value")
+            raise typer.Exit(code=1)
+        key, value = item.split("=", 1)
+        try:
+            params[key] = int(value)
+        except ValueError:
+            try:
+                params[key] = float(value)
+            except ValueError:
+                params[key] = value
+
+    try:
+        workload_cls = WorkloadRegistry.get(name)
+    except KeyError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+
+    instance = workload_cls(params)
+    typer.echo(f"Running '{name}' - warmup={instance.spec.warmup_iterations} measured={instance.spec.measurement_iterations}")
+    result = run_workload(instance)
+
+    typer.echo(f"Device: {result.device}")
+    keys = [k for k in result.per_iteration_metrics[0] if k != "device"]
+    for key in keys:
+        values = [m[key] for m in result.per_iteration_metrics if isinstance(m.get(key), (int, float))]
+        if values:
+            typer.echo(f"  {key}: mean={sum(values) / len(values):.4f}  min={min(values):.4f}  max={max(values):.4f}")
+
+    if output is not None:
+        output.write_text(jsonlib.dumps([m for m in result.per_iteration_metrics], indent=2))
+        typer.echo(f"Wrote {len(result.per_iteration_metrics)} iteration records -> {output}")
 
 
 def _yes_no(value: bool) -> str:
@@ -150,7 +212,6 @@ def profile(
 
 
 _NOT_IMPLEMENTED = [
-    "workload",
     "diagnose",
     "experiment",
     "optimize",
