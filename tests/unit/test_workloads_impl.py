@@ -9,9 +9,9 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-import workloads  # noqa: F401  (registers matmul/memory_bandwidth/vector_ops)
-from thermal.device import gpu_available
-from thermal.workload import WorkloadRegistry, run_workload
+import workloads  # noqa: E402, F401  (registers matmul/memory_bandwidth/vector_ops; import deliberately after the torch skip-guard above)
+from thermal.device import gpu_available  # noqa: E402
+from thermal.workload import WorkloadRegistry, run_workload  # noqa: E402
 
 
 @pytest.mark.parametrize(

@@ -32,7 +32,6 @@ from thermal.native_bench import (
 )
 from thermal.runner import run_and_store_experiment, run_and_store_workload
 from thermal.storage import (
-    ExperimentRecord,
     ExperimentRepository,
     RunRecord,
     SQLiteRunRepository,
@@ -40,6 +39,8 @@ from thermal.storage import (
 )
 from thermal.telemetry import TelemetryCollector
 from thermal.workload import WorkloadRegistry
+
+import workloads  # noqa: F401  (import registers all built-in workloads)
 
 
 def _parse_scalar(value: str):
@@ -94,8 +95,6 @@ def _git_commit() -> Optional[str]:
     except (OSError, subprocess.TimeoutExpired):
         return None
     return result.stdout.strip() if result.returncode == 0 else None
-
-import workloads  # noqa: F401  (import registers all built-in workloads)
 
 app = typer.Typer(
     name="thermal",

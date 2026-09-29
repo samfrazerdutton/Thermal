@@ -6,8 +6,19 @@ on:
   pull_request:
 
 jobs:
-  python-unit-tests:
-    name: Python unit tests (CPU-only, no GPU runner)
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ruff
+      - run: python -m ruff check .
+
+  python-tests:
+    name: Python unit + integration tests (CPU-only, no GPU runner)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +33,57 @@ jobs:
         run: python -m pytest tests/integration -v
       - name: thermal doctor (expect NOT READY: no GPU on this runner)
         run: python -m thermal.cli doctor || true
+      - name: Benchmark smoke test (tiny, fast -- confirms the CLI pipeline runs end to end)
+        run: |
+          thermal workload run vector_ops --param size_millions=1 --samples 3 --warmup 1
+          thermal diagnose latest
+          thermal report latest
+
+  frontend:
+    name: Web console lint + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: apps/web/package-lock.json
+      - working-directory: apps/web
+        run: npm ci
+      - working-directory: apps/web
+        run: npm run lint
+      - working-directory: apps/web
+        run: npm run build
+
+  native-build-smoke-test:
+    name: Native CMake configure smoke test (CXX only, no CUDA on this runner)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (default Visual Studio generator; this runner has no CUDA toolkit)
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake -S . -B build 2>&1 | tee configure.log
+          # This runner genuinely has no CUDA toolkit -- assert CMakeLists.txt says so
+          # honestly (THERMAL_CUDA_ENABLED=OFF) rather than silently skipping the check
+          # or crashing. See CMakeLists.txt and docs/environment-report.md.
+          grep -qi "no CUDA compiler found" configure.log || (echo "expected an honest 'no CUDA compiler found' warning on a CUDA-less runner" && exit 1)
+
+  docs-present:
+    name: Required docs present
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check required documentation files exist
+        run: |
+          for f in README.md LICENSE CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md docs/roadmap.md docs/environment-report.md; do
+            if [ ! -f "$f" ]; then
+              echo "Missing required doc: $f"
+              exit 1
+            fi
+          done
 
   gpu-hardware-dependent-tests:
     name: GPU-dependent tests (label only — no GPU runner available)
@@ -29,6 +91,8 @@ jobs:
     steps:
       - name: Note
         run: |
-          echo "GPU-dependent tests (native/cuda, NVML telemetry against real hardware," \
-               "CUDA kernel benchmarks) require a self-hosted NVIDIA runner and are not" \
-               "part of this workflow. See docs/roadmap.md Phase 17."
+          echo "GPU-dependent tests (native/cuda kernel lab, NVML telemetry against real" \
+               "hardware, thermal kernel run) require a self-hosted NVIDIA runner and are" \
+               "not part of this workflow. They are verified by hand on the reference" \
+               "development machine (RTX 2060, CUDA 13.2) -- see docs/environment-report.md" \
+               "and the Phase 7 commit for the exact verification steps."

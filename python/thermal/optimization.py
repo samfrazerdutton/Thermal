@@ -7,7 +7,7 @@ another single noisy sample.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from analysis.comparison import Verdict
 from thermal.experiment import ExperimentSpec, run_experiment

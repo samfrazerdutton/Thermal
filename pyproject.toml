@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-cov", "ninja>=1.11", "httpx>=0.27"]
+dev = ["pytest>=8.0", "pytest-cov", "ninja>=1.11", "httpx>=0.27", "ruff>=0.6"]
 # Optional AI explanation layer (Phase 16) -- everything else in THERMAL
 # works without this and without ANTHROPIC_API_KEY set.
 ai = ["anthropic>=0.30"]
@@ -39,3 +39,7 @@ where = ["python", "services"]
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration"]
 pythonpath = ["python", "services"]
+
+[tool.ruff]
+line-length = 120
+exclude = ["build", "native"]

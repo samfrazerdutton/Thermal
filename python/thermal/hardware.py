@@ -119,7 +119,7 @@ def detect_gpu() -> GPUInfo:
         try:
             major, minor = pynvml.nvmlDeviceGetCudaComputeCapability(handle)
             compute_capability = f"{major}.{minor}"
-        except pynvml.NVMLError as exc:
+        except pynvml.NVMLError:
             compute_capability = None
 
         telemetry: dict[str, Capability] = {}
