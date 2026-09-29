@@ -31,22 +31,30 @@ as real once the experiment supports it.
 
 ```text
 native/     CUDA kernels, C++ runtime, benchmark harness
-python/     thermal CLI, hardware/telemetry detection, workload plugins, analysis
-core/       runtime, telemetry, profiler, diagnosis, experiments, causal, storage
-services/   FastAPI service, background worker, scheduler
-apps/web/   React/TypeScript engineering console
-schemas/    versioned trace/experiment schemas
+python/     thermal CLI + engine (hardware, telemetry, workloads, diagnosis,
+            experiments, causal graph, optimization, storage, report, AI layer)
+services/   FastAPI service (thermal serve) -- calls the exact same python/thermal
+            code as the CLI via thermal/runner.py, so results never diverge
+apps/web/   React/TypeScript engineering console, live against services/api
+schemas/    versioned trace/run-manifest schemas
 ```
 
-A full architecture doc lands once there's more than one subsystem to document — see
-Roadmap below.
+`core/` exists in this tree but is deliberately empty — see
+[`core/README.md`](core/README.md) for why the engine lives in `python/thermal/`
+instead of the separate directory the original plan sketched.
 
 ## Status
 
-THERMAL is being built in explicit phases (see [`docs/roadmap.md`](docs/roadmap.md)).
-Nothing is claimed to work until it has been run, tested, and committed.
+THERMAL was built in 18 explicit phases (see [`docs/roadmap.md`](docs/roadmap.md)).
+All 18 are implemented, tested, and committed — nothing here is claimed to work
+without having been run first. The two deliberately narrower ones: Phase 3 ships 3
+of the 8 workloads the original design sketch named (matmul, memory_bandwidth,
+vector_ops — the rest are straightforward to add following the same interface), and
+Phase 18 implements real multi-process distributed dispatch but not multi-GPU/multi-node
+coordination, because this development machine has exactly one GPU and one node to
+verify that against.
 
-Currently implemented:
+Implemented, phase by phase:
 
 - **Phase 0 — Repository foundation**
 - **Phase 1 — Hardware detection** (`thermal hardware`, `thermal doctor`)
@@ -66,9 +74,12 @@ Currently implemented:
 - **Phase 15 — Report generation** (`thermal report <run_id|experiment_id>`, `GET /api/reports/:id`, and a Reports page in the web console — a Markdown report built entirely from what was already recorded, never recomputed, including a literal reproduction command)
 - **Phase 16 — Optional AI explanation layer** (`thermal explain`, `GET /api/explain/:id`, an "explain with AI" button in the web console — grounded strictly in the stored evidence JSON, instructed never to state a number outside it; works honestly with no API key: everything else in THERMAL requires no LLM at all)
 - **Phase 17 — CI** (`.github/workflows/ci.yml`: ruff lint, Python unit+integration tests, a benchmark smoke test through the real CLI, web console lint+build, a native CMake configure smoke test that asserts CUDA is honestly reported unavailable on a CUDA-less runner, a required-docs check, and GPU-dependent tests explicitly labeled as hand-verified on the reference machine rather than silently skipped)
+- **Phase 18 — Distributed mode** (`thermal distribute`; real dispatch across OS worker processes via `ProcessPoolExecutor`, each producing its own persisted run — multi-GPU and multi-node coordination are explicitly not implemented, not simulated)
 
-Everything else in the CLI surface exists as an explicit `NOT IMPLEMENTED` stub rather
-than a fake success message — see [`docs/roadmap.md`](docs/roadmap.md) for what's next.
+A few CLI surfaces named in the original design sketch but out of scope for the
+18 phases above (`thermal similar` / workload genome, `thermal compare` for CI
+regression detection, `thermal research init`) remain explicit `NOT IMPLEMENTED`
+stubs rather than fake success messages.
 
 ## Quick start
 
@@ -103,30 +114,65 @@ Full detected capabilities for this machine are recorded in
 
 ## Benchmarks
 
-No benchmark results are published yet — the workload runner, baseline engine, and
-experiment engine are later phases (see roadmap). THERMAL will never publish a number
-it did not measure. When the first golden experiment (Phase 8) lands, its raw data and
-reproduction script will live under `experiments/`.
+No curated benchmark numbers are published in this README — THERMAL will never
+publish a number it did not just measure on the machine reading this. Generate your
+own instead:
+
+```bash
+thermal workload run matmul --param size=1024
+thermal experiment run matmul --baseline-param size=512 --treatment-param size=1024 \
+    --metric gflops --hypothesis "Larger N improves achieved GFLOP/s."
+thermal report latest
+```
+
+or open the web console (`thermal serve` + `cd apps/web && npm run dev`) and watch a
+run stream live. `experiments/` holds research-mode experiment directories once you
+run `thermal research init` (not yet implemented — see Limitations).
 
 ## Research
 
 THERMAL treats every optimization claim as a scientific claim: baseline vs. treatment,
-repeated trials, confidence intervals, explicit statement of when a result is
-inconclusive. A `docs/methodology.md` lands with the baseline/experiment engines
-(Phase 4/8) once there is a real methodology to document.
+run in strict ABAB alternation, repeated trials, Welch's t-test and Mann-Whitney U,
+a bootstrap confidence interval on the change, and an explicit INCONCLUSIVE verdict
+when the evidence doesn't support a direction. See
+[`python/analysis/baseline.py`](python/analysis/baseline.py) and
+[`python/analysis/comparison.py`](python/analysis/comparison.py) for the exact
+methodology, and [`python/thermal/diagnosis.py`](python/thermal/diagnosis.py) for the
+deterministic bottleneck classifier's thresholds and evidence model.
 
 ## Limitations
 
-Documented honestly, updated as phases land. Current, as of Phase 1:
+Documented honestly rather than hidden:
 
-- Native (CUDA/C++) builds require a Developer Command Prompt on Windows — `cl.exe` is
-  not resolved from a plain shell. See `docs/environment-report.md`.
-- No workload runner, telemetry engine, diagnosis engine, or experiment engine exists
-  yet. `thermal workload`, `thermal profile`, `thermal diagnose`, `thermal experiment`,
-  `thermal optimize`, `thermal report`, and `thermal serve` are stubs that print
-  `NOT IMPLEMENTED` and exit non-zero.
-- GPU-accelerated PyTorch is not installed in the reference environment; transformer
-  workloads will not be able to use the GPU until that is added.
+- Only 3 of the 8 workloads sketched in the original design exist (matmul,
+  memory_bandwidth, vector_ops) — transformer inference, KV-cache stress, CPU/GPU
+  transfer, batch-size scaling, and compression-vs-transfer are not implemented.
+  New workloads are straightforward: subclass `thermal.workload.Workload` and register
+  it (see `python/workloads/matmul.py` for the shortest example).
+- Built-in workloads run on CPU on the reference machine — the installed PyTorch
+  build has no CUDA support (`thermal hardware` reports this explicitly), so `device`
+  in every result is honestly `cpu`, not a fabricated `cuda:0`.
+- The bottleneck classifier (`thermal/diagnosis.py`) is first-generation, threshold-based
+  heuristics, not validated against the golden experiments the original design sketch
+  called for (deliberately-constructed memory-bound/compute-bound/transfer-bound/
+  launch-bound workloads) — that validation harness doesn't exist yet.
+- Native CUDA builds require a non-default CMake generator on Windows (Ninja, after
+  loading the MSVC environment) because this machine's CUDA install has no Visual
+  Studio integration — `scripts/build-native.ps1` automates it. See
+  `docs/environment-report.md` for the full finding.
+- The API's POST endpoints and CLI runs execute synchronously; the WebSocket streaming
+  endpoints (Phase 14) don't change that — there is still no background job queue, so
+  a run is tied to one open connection/request.
+- The optional AI layer (Phase 16) requires `ANTHROPIC_API_KEY`; without it, `thermal
+  explain` and `GET /api/explain/:id` say so and exit/return non-success rather than
+  silently doing nothing.
+- Distributed mode (Phase 18) is real multi-process dispatch only; multi-GPU and
+  multi-node coordination are not implemented (one GPU, one node here to test with).
+- `thermal similar` (workload genome/similarity search), `thermal compare` (CI
+  regression detection across commits), and `thermal research init` are unimplemented
+  stubs.
+- Server mode (Postgres storage, authentication, multi-user) doesn't exist; local mode
+  (SQLite, no auth) is the only supported deployment.
 
 ## Roadmap
 

@@ -15,6 +15,7 @@ from analysis.baseline import InsufficientSamplesError, compute_baseline
 from thermal.causal import build_graph_from_experiments
 from thermal.counterfactual import experiment_command_for, generate_hypotheses
 from thermal.diagnosis import BottleneckClass
+from thermal.distributed import run_workload_multiprocess
 from thermal.doctor import CheckStatus, core_ready, run_doctor
 from thermal.hardware import collect_hardware_report
 from thermal.ai import AIExplainer, AIUnavailableError, explain_record
@@ -591,6 +592,35 @@ def diagnose(run_id: str = typer.Argument("latest", help="run id, or 'latest'"))
             not_actionable = [h.reason_not_actionable for h in hypotheses if h.reason_not_actionable]
             if not_actionable:
                 typer.echo(f"\nNo actionable hypothesis for this workload: {'; '.join(not_actionable)}")
+
+
+@app.command()
+def distribute(
+    workload: str = typer.Argument(..., help="workload name, e.g. vector_ops"),
+    param: list[str] = typer.Option([], "--param", "-p", help="key=value, repeatable"),
+    workers: int = typer.Option(2, "--workers", help="number of parallel worker processes"),
+    samples: int = typer.Option(10, "--samples"),
+    warmup: int = typer.Option(2, "--warmup"),
+) -> None:
+    """Run a workload across multiple worker processes in parallel.
+
+    Multi-GPU and multi-node dispatch are not implemented -- this machine
+    has one GPU, so there is nothing to verify them against (see
+    docs/roadmap.md Phase 18). This dispatches real OS processes and reports
+    which device each one actually landed on; run `thermal database list
+    --workload <name>` afterward to see each worker's persisted run.
+    """
+    params = _parse_params(param)
+    typer.echo(f"Dispatching '{workload}' across {workers} worker processes...")
+    result = run_workload_multiprocess(workload, params, num_workers=workers, samples=samples, warmup=warmup)
+
+    typer.echo(f"\nWall clock: {result.wall_clock_seconds:.2f}s for {workers} workers")
+    typer.echo(f"Distinct devices: {', '.join(result.distinct_devices)}")
+    if not result.actually_multi_gpu:
+        typer.echo("(all workers landed on the same device -- this is multi-process, not multi-GPU)")
+    typer.echo()
+    for w in result.workers:
+        typer.echo(f"  pid {w.worker_pid}  run {w.run_id}  device {w.device}")
 
 
 @app.command()

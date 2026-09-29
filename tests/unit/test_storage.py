@@ -1,6 +1,8 @@
 """Unit tests for thermal.storage (SQLiteRunRepository)."""
 
-from thermal.storage import RunRecord, SQLiteRunRepository
+from pathlib import Path
+
+from thermal.storage import RunRecord, SQLiteRunRepository, default_db_path
 
 
 def _make_record(**overrides):
@@ -124,3 +126,14 @@ def test_migration_adds_diagnosis_column_to_pre_existing_db(tmp_path):
     record = _make_record(diagnosis={"bottleneck": "COMPUTE_BOUND"})
     repo.save(record)
     assert repo.get(record.run_id).diagnosis == {"bottleneck": "COMPUTE_BOUND"}
+
+
+def test_default_db_path_respects_env_override(monkeypatch, tmp_path):
+    override = tmp_path / "custom" / "thermal.sqlite3"
+    monkeypatch.setenv("THERMAL_DB_PATH", str(override))
+    assert default_db_path() == override
+
+
+def test_default_db_path_falls_back_to_home_dir(monkeypatch):
+    monkeypatch.delenv("THERMAL_DB_PATH", raising=False)
+    assert default_db_path() == Path.home() / ".thermal" / "thermal.sqlite3"

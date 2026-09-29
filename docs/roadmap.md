@@ -23,7 +23,7 @@ before the next begins — no phase is "done" because its files exist.
 | 15 | Report generation (`thermal report`) | Done (CLI, API, and web console all render the same generate_report()) |
 | 16 | Optional AI explanation layer (evidence-grounded, no fabrication, works without it) | Done (`thermal explain`, `/api/explain/:id`; verified honest on this machine, which has no ANTHROPIC_API_KEY set) |
 | 17 | CI integration (GitHub Actions, GPU-dependent tests clearly labeled) | Done (lint, Python unit+integration+smoke test, frontend lint+build, native CMake configure smoke test, required-docs check, GPU tests honestly labeled as hand-verified only) |
-| 18 | Distributed / cluster mode | Not started |
+| 18 | Distributed / cluster mode | Done for what this hardware can verify: real multi-process dispatch (`thermal distribute`). Multi-GPU and multi-node coordination are explicitly NOT implemented — this machine has one GPU and one node, so there is nothing to test them against; see `python/thermal/distributed.py` |
 
 ## Why phases, not features
 

@@ -1,18 +1,24 @@
 # core/
 
-The analysis and experimentation engine, independent of any particular CLI or web
-frontend. Subdirectories map directly to roadmap phases:
+Empty by design decision, not by omission. The Phase 0 plan sketched here put the
+runtime/telemetry/diagnosis/experiments/optimization/causal/storage engine under
+`core/`, separate from the CLI. Once Phase 2 actually started, that split added a
+layer of indirection with no real benefit for a single-package Python codebase — the
+engine lives in `python/thermal/` instead (see its module list below), used directly
+by both the CLI (`thermal/cli.py`) and the API (`services/api/main.py`) through the
+shared `thermal/runner.py`.
 
-| Directory | Phase | Purpose |
-|---|---|---|
-| `runtime/` | 2–3 | Workload execution runtime shared by CLI and API |
-| `telemetry/` | 2 | Continuous hardware/process telemetry sampling |
-| `profiler/` | 7 | Kernel/timeline profiling integration (Nsight, CUPTI) |
-| `diagnosis/` | 6 | Deterministic bottleneck classifier |
-| `experiments/` | 8 | Controlled experiment engine |
-| `optimization/` | 11 | Optimization search strategies |
-| `causal/` | 10 | Evidence-linked causal graph |
-| `storage/` | 5 | Storage repository abstraction (SQLite/Postgres/Parquet) |
+| What was planned here | Where it actually landed |
+|---|---|
+| `runtime/` | `python/thermal/workload.py`, `python/thermal/runner.py` |
+| `telemetry/` | `python/thermal/telemetry.py` |
+| `profiler/` | `native/cuda/bench_main.cu` (CUDA-event timing); no separate Nsight/CUPTI integration |
+| `diagnosis/` | `python/thermal/diagnosis.py` |
+| `experiments/` | `python/thermal/experiment.py`, `python/analysis/comparison.py` |
+| `optimization/` | `python/thermal/optimization.py` |
+| `causal/` | `python/thermal/causal.py` |
+| `storage/` | `python/thermal/storage.py` |
 
-Each subdirectory gets real code, tests, and a short README when its phase lands —
-none of these exist yet as of Phase 1.
+This directory is kept (rather than deleted) so the discrepancy between the original
+plan and the as-built layout stays visible and explained, instead of silently
+disappearing.

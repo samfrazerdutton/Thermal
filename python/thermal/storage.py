@@ -10,6 +10,7 @@ from the run record by path, not inlined into the relational store.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 import uuid
@@ -367,4 +368,12 @@ class ExperimentRepository:
 
 
 def default_db_path() -> Path:
+    """THERMAL_DB_PATH overrides the default location. Reading it from the
+    environment (not a monkeypatched function reference) matters for
+    thermal.distributed: worker processes are spawned fresh and don't
+    inherit the parent's in-memory state, but they do inherit environment
+    variables."""
+    override = os.environ.get("THERMAL_DB_PATH")
+    if override:
+        return Path(override)
     return Path.home() / ".thermal" / "thermal.sqlite3"
