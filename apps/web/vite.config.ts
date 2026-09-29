@@ -10,7 +10,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      '/api': `http://127.0.0.1:${apiPort}`,
+      // ws: true so the WebSocket live-streaming endpoints (Phase 14) get
+      // proxied too, not just plain HTTP requests.
+      '/api': { target: `http://127.0.0.1:${apiPort}`, ws: true, changeOrigin: true },
     },
   },
 })

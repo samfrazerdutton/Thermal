@@ -1,9 +1,14 @@
 """THERMAL FastAPI service.
 
-Local single-user mode: no auth, SQLite storage, synchronous workload/
-experiment execution (a request blocks until the run finishes -- Phase 14
-adds live streaming for long runs; there is no background queue yet, and
-this module says so rather than pretending one exists).
+Local single-user mode: no auth, SQLite storage. POST /api/workloads/run and
+POST /api/experiments still block until the run finishes (fine for short
+runs, and simple to reason about); the WebSocket endpoints below
+(/api/ws/workloads/run, /api/ws/experiments/run) are Phase 14's answer for
+watching a longer run live, streaming the same events thermal.runner emits
+(run_started, warmup_started, iteration_completed, telemetry_update,
+diagnosis_updated, run_completed, ...) as they happen -- there still isn't a
+background job queue (Phase 18), so a run is still tied to one open
+connection; closing it doesn't cancel the run, it just stops watching it.
 
 Every endpoint here calls the exact same code the CLI calls
 (thermal.runner, thermal.storage, thermal.diagnosis, thermal.causal) so a
@@ -14,10 +19,11 @@ workload" or "run an experiment" in this codebase.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 
 from api.schemas import ExperimentRunRequest, OptimizeGridSearchRequest, WorkloadRunRequest
 from thermal.causal import build_graph_from_experiments
@@ -128,6 +134,101 @@ def run_workload_endpoint(request: WorkloadRunRequest) -> dict:
         "run": _run_record_to_dict(outcome.record),
         "diagnosis": _diagnosis_to_dict(outcome.diagnosis),
     }
+
+
+async def _stream_events(websocket: WebSocket, blocking_call, already_accepted: bool = False) -> None:
+    """Runs `blocking_call(on_event)` on a worker thread and forwards every
+    event it emits to the websocket as JSON, in order, as they happen --
+    `blocking_call` is thermal.runner code, which is synchronous and knows
+    nothing about asyncio or websockets."""
+    if not already_accepted:
+        await websocket.accept()
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def on_event(name: str, payload: dict[str, Any]) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, {"event": name, **payload})
+
+    def run() -> None:
+        try:
+            final = blocking_call(on_event)
+            loop.call_soon_threadsafe(queue.put_nowait, {"event": "result", **final})
+        except (KeyError, ValueError) as exc:
+            loop.call_soon_threadsafe(queue.put_nowait, {"event": "error", "detail": str(exc)})
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+
+    worker = asyncio.create_task(asyncio.to_thread(run))
+    try:
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            await websocket.send_json(item)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await worker
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass  # already closed (client disconnected)
+
+
+@app.websocket("/api/ws/workloads/run")
+async def ws_run_workload(websocket: WebSocket) -> None:
+    """Client sends one WorkloadRunRequest as JSON text as the first message
+    after the connection is accepted; server streams events, then a final
+    {"event": "result", "run": {...}, "diagnosis": {...}} before closing."""
+    await websocket.accept()
+    try:
+        raw = await websocket.receive_text()
+        request = WorkloadRunRequest.model_validate_json(raw)
+    except Exception as exc:
+        await websocket.send_json({"event": "error", "detail": f"invalid request: {exc}"})
+        await websocket.close()
+        return
+
+    def blocking_call(on_event):
+        outcome = run_and_store_workload(
+            request.workload_name,
+            request.params,
+            samples=request.samples,
+            warmup=request.warmup,
+            on_event=on_event,
+        )
+        return {"run": _run_record_to_dict(outcome.record), "diagnosis": _diagnosis_to_dict(outcome.diagnosis)}
+
+    await _stream_events(websocket, blocking_call, already_accepted=True)
+
+
+@app.websocket("/api/ws/experiments/run")
+async def ws_run_experiment(websocket: WebSocket) -> None:
+    """Same protocol as /api/ws/workloads/run, for ExperimentRunRequest."""
+    await websocket.accept()
+    try:
+        raw = await websocket.receive_text()
+        request = ExperimentRunRequest.model_validate_json(raw)
+    except Exception as exc:
+        await websocket.send_json({"event": "error", "detail": f"invalid request: {exc}"})
+        await websocket.close()
+        return
+
+    def blocking_call(on_event):
+        outcome = run_and_store_experiment(
+            workload_name=request.workload_name,
+            baseline_params=request.baseline_params,
+            treatment_params=request.treatment_params,
+            metric_name=request.metric_name,
+            higher_is_better=request.higher_is_better,
+            repetitions=request.repetitions,
+            warmup_iterations=request.warmup_iterations,
+            hypothesis=request.hypothesis,
+            on_event=on_event,
+        )
+        return {"experiment": _experiment_record_to_dict(outcome.record)}
+
+    await _stream_events(websocket, blocking_call, already_accepted=True)
 
 
 @app.get("/api/runs")

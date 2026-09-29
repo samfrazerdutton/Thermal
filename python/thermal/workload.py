@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 
 @dataclass(frozen=True)
@@ -95,16 +95,36 @@ class WorkloadRunResult:
     per_iteration_metrics: list[dict[str, Any]]
 
 
-def run_workload(workload: Workload) -> WorkloadRunResult:
+def run_workload(
+    workload: Workload,
+    on_event: Optional[Callable[[str, dict[str, Any]], None]] = None,
+) -> WorkloadRunResult:
     """Run warmup + measured iterations. Warmup results are discarded, not hidden --
     they simply aren't part of the returned measurement set (see docs/roadmap.md
-    Phase 4 for the statistical baseline engine built on top of this)."""
+    Phase 4 for the statistical baseline engine built on top of this).
+
+    on_event(name, payload), if given, is called synchronously at each stage
+    (warmup_started, warmup_iteration, measurement_started,
+    iteration_completed) -- Phase 14's live streaming forwards these over a
+    WebSocket, but this function has no idea that's happening; it just emits.
+    """
+    def emit(name: str, payload: dict[str, Any]) -> None:
+        if on_event is not None:
+            on_event(name, payload)
+
     workload.setup()
     try:
-        for _ in range(workload.spec.warmup_iterations):
+        emit("warmup_started", {"count": workload.spec.warmup_iterations})
+        for i in range(workload.spec.warmup_iterations):
             workload.run_once()
+            emit("warmup_iteration", {"index": i})
 
-        results = [workload.run_once() for _ in range(workload.spec.measurement_iterations)]
+        emit("measurement_started", {"count": workload.spec.measurement_iterations})
+        results = []
+        for i in range(workload.spec.measurement_iterations):
+            metrics = workload.run_once()
+            results.append(metrics)
+            emit("iteration_completed", {"index": i, "metrics": metrics})
     finally:
         workload.teardown()
 

@@ -62,6 +62,7 @@ Currently implemented:
 - **Phase 11 — Optimization search** (`thermal optimize`; grid search and coordinate descent, each candidate a real controlled experiment — never picks a candidate whose verdict wasn't IMPROVED)
 - **Phase 12 — FastAPI service** (`thermal serve`; `/api/health`, `/api/hardware`, `/api/workloads`, `/api/runs`, `/api/experiments`, `/api/diagnoses`, `/api/causal-graph`, `/api/optimize/grid-search` — every endpoint calls the same `thermal.runner` code the CLI calls, so a run triggered from the API and one from the CLI are computed identically)
 - **Phase 13 — Web console** (`apps/web`; React/TypeScript/Vite/Tailwind, dark instrument-panel design, live against the real API — no mock data path)
+- **Phase 14 — Live experiment streaming** (`/api/ws/workloads/run`, `/api/ws/experiments/run`; a run started from the Workloads page streams real events — run_started, warmup, iteration_completed, telemetry_update, diagnosis_updated, run_completed — over a WebSocket as they happen, verified end-to-end with a real browser click-through)
 
 Everything else in the CLI surface exists as an explicit `NOT IMPLEMENTED` stub rather
 than a fake success message — see [`docs/roadmap.md`](docs/roadmap.md) for what's next.

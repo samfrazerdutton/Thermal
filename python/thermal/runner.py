@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from analysis.baseline import BaselineStats, InsufficientSamplesError, compute_baseline
 from thermal.diagnosis import Diagnosis, classify, features_from_telemetry
@@ -26,6 +26,18 @@ from thermal.storage import (
 )
 from thermal.telemetry import TelemetryCollector
 from thermal.workload import WorkloadRegistry, run_workload
+
+
+def _telemetry_sample_summary(sample) -> dict[str, Any]:
+    """A compact projection of a TelemetrySample for streaming -- the full
+    sample (with every unavailable_counters entry) still goes to the JSONL
+    file; live viewers only need the headline numbers."""
+    return {
+        "cpu_utilization_percent": sample.cpu.utilization_percent,
+        "gpu_utilization_percent": sample.gpu.utilization_percent if sample.gpu else None,
+        "gpu_memory_used_mb": sample.gpu.memory_used_mb if sample.gpu else None,
+        "gpu_temperature_c": sample.gpu.temperature_c if sample.gpu else None,
+    }
 
 
 def git_commit() -> Optional[str]:
@@ -52,7 +64,12 @@ def run_and_store_workload(
     params: Optional[dict[str, Any]] = None,
     samples: Optional[int] = None,
     warmup: Optional[int] = None,
+    on_event: Optional[Callable[[str, dict[str, Any]], None]] = None,
 ) -> WorkloadRunOutcome:
+    def emit(name: str, payload: dict[str, Any]) -> None:
+        if on_event is not None:
+            on_event(name, payload)
+
     workload_cls = WorkloadRegistry.get(workload_name)
     instance = workload_cls(params)
     if samples is not None or warmup is not None:
@@ -64,10 +81,15 @@ def run_and_store_workload(
             }
         )
 
-    telemetry = TelemetryCollector(interval_seconds=0.2)
+    emit("run_started", {"workload_name": instance.spec.name, "configuration": instance.params})
+
+    telemetry = TelemetryCollector(
+        interval_seconds=0.2,
+        on_sample=lambda sample: emit("telemetry_update", _telemetry_sample_summary(sample)),
+    )
     telemetry.start()
     try:
-        result = run_workload(instance)
+        result = run_workload(instance, on_event=emit)
     finally:
         telemetry.stop()
 
@@ -86,6 +108,7 @@ def run_and_store_workload(
 
     features = features_from_telemetry(telemetry.samples)
     diagnosis = classify(features)
+    emit("diagnosis_updated", {"bottleneck": diagnosis.bottleneck.value, "confidence": diagnosis.confidence})
 
     telemetry_dir = default_db_path().parent / "telemetry"
     telemetry_dir.mkdir(parents=True, exist_ok=True)
@@ -120,6 +143,7 @@ def run_and_store_workload(
     record.telemetry_path = str(telemetry_path)
 
     SQLiteRunRepository(default_db_path()).save(record)
+    emit("run_completed", {"run_id": record.run_id, "device": record.device})
 
     return WorkloadRunOutcome(
         record=record,
@@ -144,7 +168,12 @@ def run_and_store_experiment(
     repetitions: int = 15,
     warmup_iterations: int = 3,
     hypothesis: str = "",
+    on_event: Optional[Callable[[str, dict[str, Any]], None]] = None,
 ) -> ExperimentRunOutcome:
+    def emit(name: str, payload: dict[str, Any]) -> None:
+        if on_event is not None:
+            on_event(name, payload)
+
     spec = ExperimentSpec(
         workload_name=workload_name,
         baseline_params=baseline_params,
@@ -155,8 +184,10 @@ def run_and_store_experiment(
         warmup_iterations=warmup_iterations,
         hypothesis=hypothesis,
     )
+    emit("experiment_started", {"workload_name": workload_name, "metric_name": metric_name, "repetitions": repetitions})
     result = run_experiment(spec)
     comparison = result.comparison
+    emit("experiment_finished", {"verdict": comparison.verdict.value, "percent_change": comparison.percent_change})
 
     record = ExperimentRecord.new(
         workload_name=workload_name,
