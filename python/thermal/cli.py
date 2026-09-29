@@ -16,6 +16,16 @@ from analysis.baseline import InsufficientSamplesError, compute_baseline
 from thermal.diagnosis import classify, features_from_telemetry
 from thermal.doctor import CheckStatus, core_ready, run_doctor
 from thermal.hardware import collect_hardware_report
+from thermal.native_bench import (
+    KERNEL_NAMES,
+    KernelBenchFailedError,
+    KernelBenchNotBuiltError,
+    achieved_bandwidth_gbps,
+    achieved_gflops,
+    binary_path,
+    is_built,
+    run_kernel_bench,
+)
 from thermal.storage import RunRecord, SQLiteRunRepository, default_db_path
 from thermal.telemetry import TelemetryCollector
 from thermal.workload import WorkloadRegistry, run_workload
@@ -41,6 +51,59 @@ app = typer.Typer(
 
 workload_app = typer.Typer(help="Run and inspect THERMAL workloads.", no_args_is_help=True)
 app.add_typer(workload_app, name="workload")
+
+kernel_app = typer.Typer(help="Run the native CUDA kernel lab (native/cuda).", no_args_is_help=True)
+app.add_typer(kernel_app, name="kernel")
+
+
+@kernel_app.command("list")
+def kernel_list() -> None:
+    """List the native CUDA kernels and whether the bench binary is built."""
+    typer.echo("THERMAL CUDA KERNEL LAB\n")
+    if is_built():
+        typer.echo(f"Binary: {binary_path()}\n")
+    else:
+        typer.echo(f"Binary not built yet: {binary_path()}")
+        typer.echo("Build it with: powershell -File scripts/build-native.ps1\n")
+    for name in KERNEL_NAMES:
+        typer.echo(f"  {name}")
+
+
+@kernel_app.command("run")
+def kernel_run(
+    name: str = typer.Argument(..., help="kernel name, e.g. matmul_tiled"),
+    n: int = typer.Option(1 << 20, "--n", help="problem size (element count, or N for NxN matmul)"),
+    iters: int = typer.Option(20, "--iters"),
+    warmup: int = typer.Option(5, "--warmup"),
+    block_size: int = typer.Option(256, "--block-size"),
+) -> None:
+    """Run one native CUDA kernel: correctness check, then a timed baseline."""
+    try:
+        result = run_kernel_bench(name, n=n, iters=iters, warmup=warmup, block_size=block_size)
+    except KernelBenchNotBuiltError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=2)
+    except (KernelBenchFailedError, ValueError) as exc:
+        typer.echo(f"Kernel bench failed: {exc}")
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Kernel: {result.kernel}")
+    typer.echo(f"Device: {result.device}")
+    typer.echo(f"Correct: {result.correct}\n")
+
+    try:
+        baseline = compute_baseline(result.iteration_times_ms, metric_name="kernel_time_ms")
+        typer.echo(baseline.summary_text())
+    except InsufficientSamplesError as exc:
+        typer.echo(str(exc))
+
+    mean_ms = sum(result.iteration_times_ms) / len(result.iteration_times_ms)
+    gflops = achieved_gflops(result, mean_ms)
+    bandwidth = achieved_bandwidth_gbps(result, mean_ms)
+    if gflops is not None:
+        typer.echo(f"\nachieved GFLOP/s (at mean time): {gflops:.1f}")
+    if bandwidth is not None:
+        typer.echo(f"achieved bandwidth GB/s (at mean time): {bandwidth:.1f}")
 
 
 @workload_app.command("list")

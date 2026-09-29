@@ -7,12 +7,12 @@ before the next begins — no phase is "done" because its files exist.
 |---|---|---|
 | 0 | Repository foundation | Done |
 | 1 | Hardware detection (`thermal hardware`, `thermal doctor`) | Done |
-| 2 | Telemetry engine (continuous GPU/CPU/process sampling, versioned trace schema) | Not started |
-| 3 | Workload runner (plugin architecture, first workloads) | Not started |
-| 4 | Baseline statistics engine (warmup, repeated trials, CI, outlier detection) | Not started |
-| 5 | Storage (SQLite local / Postgres server, Parquet telemetry, shared repository abstraction) | Not started |
-| 6 | Bottleneck classifier (deterministic, feature-based, no AI) | Not started |
-| 7 | CUDA benchmark suite (native/cuda kernel lab) | Not started |
+| 2 | Telemetry engine (continuous GPU/CPU/process sampling, versioned trace schema) | Done |
+| 3 | Workload runner (plugin architecture, first workloads) | Done (3 of 8 workloads: matmul, memory_bandwidth, vector_ops) |
+| 4 | Baseline statistics engine (warmup, repeated trials, CI, outlier detection) | Done |
+| 5 | Storage (SQLite local / Postgres server, Parquet telemetry, shared repository abstraction) | Done (SQLite local; Postgres deferred to Phase 12) |
+| 6 | Bottleneck classifier (deterministic, feature-based, no AI) | Done (first-generation heuristics; refine against Phase 40 golden experiments) |
+| 7 | CUDA benchmark suite (native/cuda kernel lab) | Done (vector_add, reduction, matmul: naive + optimized variants) |
 | 8 | Experiment engine (controlled A/B, randomization policy) | Not started |
 | 9 | Counterfactual engine (hypothesis generation from bottleneck class) | Not started |
 | 10 | Causal graph (evidence-linked, not correlation-only) | Not started |

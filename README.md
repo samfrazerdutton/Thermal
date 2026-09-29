@@ -48,8 +48,14 @@ Nothing is claimed to work until it has been run, tested, and committed.
 
 Currently implemented:
 
-- **Phase 0 — Repository foundation** (this commit)
+- **Phase 0 — Repository foundation**
 - **Phase 1 — Hardware detection** (`thermal hardware`, `thermal doctor`)
+- **Phase 2 — Telemetry engine** (`thermal profile`, versioned trace schema)
+- **Phase 3 — Workload runner** (`thermal workload list/run`; matmul, memory_bandwidth, vector_ops)
+- **Phase 4 — Baseline statistics** (mean/median/CV/percentiles/bootstrap CI/outliers)
+- **Phase 5 — Storage** (`thermal database list/show`, SQLite local run repository)
+- **Phase 6 — Bottleneck classifier** (`thermal diagnose`, deterministic, no AI)
+- **Phase 7 — CUDA kernel lab** (`thermal kernel list/run`; vector add, reduction, tiled matmul)
 
 Everything else in the CLI surface exists as an explicit `NOT IMPLEMENTED` stub rather
 than a fake success message — see [`docs/roadmap.md`](docs/roadmap.md) for what's next.

@@ -66,7 +66,16 @@ machine on 2026-09-28. Nothing here is assumed or estimated.
   MSVC/Visual-Studio CMake generator as-is; they must either (a) reinstall the CUDA
   toolkit with VS integration selected, or (b) use the Ninja/Makefile CMake generator
   driving `nvcc`+`cl` directly from a Developer Command Prompt. This is a real,
-  reproduced finding, not a guess — Phase 7 will pick one of these and document it.
+  reproduced finding, not a guess.
+
+  **Resolved in Phase 7**: option (b) works. `cmake -S . -B build/native -G Ninja`,
+  run after loading the MSVC environment (`vcvarsall.bat x64`), correctly detects
+  `nvcc` as the CUDA compiler and builds real `.cu` files — verified by compiling and
+  running an actual kernel (`vecAdd<<<...>>>`) on the RTX 2060 and checking its output.
+  `scripts/build-native.ps1` automates this (load vcvars into the current process,
+  put the pip-installed `ninja` package's script directory on PATH, configure with
+  `-G Ninja`, build) so `native/cuda` builds with one command despite the default
+  generator not working here.
 - **No GPU-enabled PyTorch.** The transformer-inference and KV-cache workloads (Phase 3+)
   cannot exercise the GPU through PyTorch until a CUDA-enabled wheel is installed. This
   is a deliberate, explicit gap — not silently worked around.

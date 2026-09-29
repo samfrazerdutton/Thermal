@@ -20,11 +20,11 @@ dependencies = [
     "fastapi>=0.110",
     "nvidia-ml-py>=12.0",
     "jsonschema>=4.20",
+    "torch",
 ]
 
 [project.optional-dependencies]
-gpu = ["torch"]
-dev = ["pytest>=8.0", "pytest-cov"]
+dev = ["pytest>=8.0", "pytest-cov", "ninja>=1.11"]
 
 [project.scripts]
 thermal = "thermal.cli:main"
