@@ -56,6 +56,7 @@ Currently implemented:
 - **Phase 5 — Storage** (`thermal database list/show`, SQLite local run repository)
 - **Phase 6 — Bottleneck classifier** (`thermal diagnose`, deterministic, no AI)
 - **Phase 7 — CUDA kernel lab** (`thermal kernel list/run`; vector add, reduction, tiled matmul)
+- **Phase 8 — Controlled experiment engine** (`thermal experiment run/list/compare`; ABAB alternation, Welch's t-test, Mann-Whitney U, bootstrap CI, honest INCONCLUSIVE verdicts)
 
 Everything else in the CLI surface exists as an explicit `NOT IMPLEMENTED` stub rather
 than a fake success message — see [`docs/roadmap.md`](docs/roadmap.md) for what's next.

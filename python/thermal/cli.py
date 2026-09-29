@@ -15,6 +15,7 @@ import typer
 from analysis.baseline import InsufficientSamplesError, compute_baseline
 from thermal.diagnosis import classify, features_from_telemetry
 from thermal.doctor import CheckStatus, core_ready, run_doctor
+from thermal.experiment import ExperimentSpec, run_experiment
 from thermal.hardware import collect_hardware_report
 from thermal.native_bench import (
     KERNEL_NAMES,
@@ -26,9 +27,32 @@ from thermal.native_bench import (
     is_built,
     run_kernel_bench,
 )
-from thermal.storage import RunRecord, SQLiteRunRepository, default_db_path
+from thermal.storage import (
+    ExperimentRecord,
+    ExperimentRepository,
+    RunRecord,
+    SQLiteRunRepository,
+    default_db_path,
+)
 from thermal.telemetry import TelemetryCollector
 from thermal.workload import WorkloadRegistry, run_workload
+
+
+def _parse_params(param: list[str]) -> dict:
+    params: dict = {}
+    for item in param:
+        if "=" not in item:
+            typer.echo(f"invalid --param '{item}', expected key=value")
+            raise typer.Exit(code=1)
+        key, value = item.split("=", 1)
+        try:
+            params[key] = int(value)
+        except ValueError:
+            try:
+                params[key] = float(value)
+            except ValueError:
+                params[key] = value
+    return params
 
 
 def _git_commit() -> Optional[str]:
@@ -128,19 +152,7 @@ def workload_run(
     output: Optional[Path] = typer.Option(None, "--output", help="write per-iteration metrics as JSON"),
 ) -> None:
     """Run one workload: warmup iterations, then measured iterations."""
-    params: dict = {}
-    for item in param:
-        if "=" not in item:
-            typer.echo(f"invalid --param '{item}', expected key=value")
-            raise typer.Exit(code=1)
-        key, value = item.split("=", 1)
-        try:
-            params[key] = int(value)
-        except ValueError:
-            try:
-                params[key] = float(value)
-            except ValueError:
-                params[key] = value
+    params = _parse_params(param)
 
     try:
         workload_cls = WorkloadRegistry.get(name)
@@ -366,6 +378,113 @@ def profile(
             typer.echo("  GPU: unavailable")
 
 
+experiment_app = typer.Typer(help="Run controlled baseline-vs-treatment experiments.", no_args_is_help=True)
+app.add_typer(experiment_app, name="experiment")
+
+
+@experiment_app.command("run")
+def experiment_run(
+    workload: str = typer.Argument(..., help="workload name, e.g. matmul"),
+    baseline_param: list[str] = typer.Option([], "--baseline-param", help="key=value, repeatable"),
+    treatment_param: list[str] = typer.Option([], "--treatment-param", help="key=value, repeatable"),
+    metric: str = typer.Option(..., "--metric", help="metric name to compare, e.g. gflops"),
+    repetitions: int = typer.Option(15, "--repetitions"),
+    warmup: int = typer.Option(3, "--warmup"),
+    lower_is_better: bool = typer.Option(False, "--lower-is-better", help="set for latency-like metrics"),
+    hypothesis: str = typer.Option("", "--hypothesis", help="one-sentence hypothesis being tested"),
+) -> None:
+    """Run baseline vs. treatment in strict alternation (ABAB), then verify statistically."""
+    spec = ExperimentSpec(
+        workload_name=workload,
+        baseline_params=_parse_params(baseline_param),
+        treatment_params=_parse_params(treatment_param),
+        metric_name=metric,
+        higher_is_better=not lower_is_better,
+        repetitions=repetitions,
+        warmup_iterations=warmup,
+        hypothesis=hypothesis,
+    )
+
+    if hypothesis:
+        typer.echo(f"HYPOTHESIS\n{hypothesis}\n")
+
+    try:
+        result = run_experiment(spec)
+    except (KeyError, ValueError) as exc:
+        typer.echo(f"Experiment failed: {exc}")
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Baseline device: {result.baseline_device}  Treatment device: {result.treatment_device}\n")
+    typer.echo(result.comparison.summary_text())
+
+    from dataclasses import asdict as _asdict
+
+    record = ExperimentRecord.new(
+        workload_name=workload,
+        metric_name=metric,
+        higher_is_better=not lower_is_better,
+        repetitions=repetitions,
+        baseline_config=spec.baseline_params,
+        treatment_config=spec.treatment_params,
+        baseline_values=result.baseline_values,
+        treatment_values=result.treatment_values,
+        baseline_device=result.baseline_device,
+        treatment_device=result.treatment_device,
+        comparison=_asdict(result.comparison),
+        verdict=result.comparison.verdict.value,
+        hypothesis=hypothesis,
+        git_commit=_git_commit(),
+    )
+    ExperimentRepository(default_db_path()).save(record)
+    typer.echo(f"\nSaved experiment {record.experiment_id} -> {default_db_path()}")
+
+
+@experiment_app.command("list")
+def experiment_list(
+    workload: Optional[str] = typer.Option(None, "--workload"),
+    limit: int = typer.Option(20, "--limit"),
+) -> None:
+    """List stored experiments, most recent first."""
+    repo = ExperimentRepository(default_db_path())
+    experiments = repo.list(workload_name=workload, limit=limit)
+    if not experiments:
+        typer.echo(f"No experiments stored yet in {default_db_path()}")
+        return
+    for exp in experiments:
+        typer.echo(
+            f"{exp.experiment_id}  {exp.workload_name:<20} metric={exp.metric_name:<15} "
+            f"verdict={exp.verdict:<12} n={exp.repetitions}"
+        )
+
+
+@experiment_app.command("compare")
+def experiment_compare(experiment_id: str) -> None:
+    """Show full detail for one stored experiment."""
+    repo = ExperimentRepository(default_db_path())
+    exp = repo.get(experiment_id)
+    if exp is None:
+        typer.echo(f"No experiment found with id {experiment_id}")
+        raise typer.Exit(code=1)
+
+    if exp.hypothesis:
+        typer.echo(f"HYPOTHESIS\n{exp.hypothesis}\n")
+    typer.echo(f"Workload: {exp.workload_name}")
+    typer.echo(f"Baseline config: {exp.baseline_config}")
+    typer.echo(f"Treatment config: {exp.treatment_config}")
+    typer.echo(f"Baseline device: {exp.baseline_device}  Treatment device: {exp.treatment_device}\n")
+    comparison = exp.comparison
+    typer.echo(f"CONTROL\n{comparison['baseline_mean']:.4g}\n")
+    typer.echo(f"TREATMENT\n{comparison['treatment_mean']:.4g}\n")
+    typer.echo(f"CHANGE\n{comparison['percent_change']:+.1f}%\n")
+    if comparison.get("percent_change_ci_low") is not None:
+        typer.echo(
+            f"{comparison['confidence_level'] * 100:.0f}% CI\n"
+            f"[{comparison['percent_change_ci_low']:+.1f}%, {comparison['percent_change_ci_high']:+.1f}%]\n"
+        )
+    typer.echo(f"n = {exp.repetitions}\n")
+    typer.echo(f"VERDICT:\n{exp.verdict}")
+
+
 database_app = typer.Typer(help="Inspect stored runs (SQLite local mode).", no_args_is_help=True)
 app.add_typer(database_app, name="database")
 
@@ -444,7 +563,6 @@ def diagnose(run_id: str = typer.Argument("latest", help="run id, or 'latest'"))
 
 
 _NOT_IMPLEMENTED = [
-    "experiment",
     "optimize",
     "report",
     "serve",

@@ -38,6 +38,28 @@ CREATE TABLE IF NOT EXISTS runs (
 
 CREATE INDEX IF NOT EXISTS idx_runs_workload ON runs(workload_name);
 CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at_ns);
+
+CREATE TABLE IF NOT EXISTS experiments (
+    experiment_id TEXT PRIMARY KEY,
+    created_at_ns INTEGER NOT NULL,
+    git_commit TEXT,
+    workload_name TEXT NOT NULL,
+    hypothesis TEXT,
+    metric_name TEXT NOT NULL,
+    higher_is_better INTEGER NOT NULL,
+    repetitions INTEGER NOT NULL,
+    baseline_config_json TEXT NOT NULL,
+    treatment_config_json TEXT NOT NULL,
+    baseline_values_json TEXT NOT NULL,
+    treatment_values_json TEXT NOT NULL,
+    baseline_device TEXT NOT NULL,
+    treatment_device TEXT NOT NULL,
+    comparison_json TEXT NOT NULL,
+    verdict TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_experiments_workload ON experiments(workload_name);
+CREATE INDEX IF NOT EXISTS idx_experiments_created_at ON experiments(created_at_ns);
 """
 
 
@@ -194,6 +216,154 @@ class SQLiteRunRepository(RunRepository):
                     "SELECT * FROM runs ORDER BY created_at_ns DESC LIMIT ?", (limit,)
                 ).fetchall()
             return [_row_to_record(r) for r in rows]
+
+
+@dataclass
+class ExperimentRecord:
+    experiment_id: str
+    created_at_ns: int
+    git_commit: Optional[str]
+    workload_name: str
+    hypothesis: str
+    metric_name: str
+    higher_is_better: bool
+    repetitions: int
+    baseline_config: dict[str, Any]
+    treatment_config: dict[str, Any]
+    baseline_values: list[float]
+    treatment_values: list[float]
+    baseline_device: str
+    treatment_device: str
+    comparison: dict[str, Any]
+    verdict: str
+
+    @classmethod
+    def new(
+        cls,
+        workload_name: str,
+        metric_name: str,
+        higher_is_better: bool,
+        repetitions: int,
+        baseline_config: dict[str, Any],
+        treatment_config: dict[str, Any],
+        baseline_values: list[float],
+        treatment_values: list[float],
+        baseline_device: str,
+        treatment_device: str,
+        comparison: dict[str, Any],
+        verdict: str,
+        hypothesis: str = "",
+        git_commit: Optional[str] = None,
+    ) -> "ExperimentRecord":
+        return cls(
+            experiment_id=str(uuid.uuid4()),
+            created_at_ns=time.time_ns(),
+            git_commit=git_commit,
+            workload_name=workload_name,
+            hypothesis=hypothesis,
+            metric_name=metric_name,
+            higher_is_better=higher_is_better,
+            repetitions=repetitions,
+            baseline_config=baseline_config,
+            treatment_config=treatment_config,
+            baseline_values=baseline_values,
+            treatment_values=treatment_values,
+            baseline_device=baseline_device,
+            treatment_device=treatment_device,
+            comparison=comparison,
+            verdict=verdict,
+        )
+
+
+def _row_to_experiment(row: sqlite3.Row) -> ExperimentRecord:
+    return ExperimentRecord(
+        experiment_id=row["experiment_id"],
+        created_at_ns=row["created_at_ns"],
+        git_commit=row["git_commit"],
+        workload_name=row["workload_name"],
+        hypothesis=row["hypothesis"] or "",
+        metric_name=row["metric_name"],
+        higher_is_better=bool(row["higher_is_better"]),
+        repetitions=row["repetitions"],
+        baseline_config=json.loads(row["baseline_config_json"]),
+        treatment_config=json.loads(row["treatment_config_json"]),
+        baseline_values=json.loads(row["baseline_values_json"]),
+        treatment_values=json.loads(row["treatment_values_json"]),
+        baseline_device=row["baseline_device"],
+        treatment_device=row["treatment_device"],
+        comparison=json.loads(row["comparison_json"]),
+        verdict=row["verdict"],
+    )
+
+
+class ExperimentRepository:
+    def __init__(self, db_path: Path) -> None:
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            conn.executescript(SCHEMA_SQL)
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
+    def save(self, experiment: ExperimentRecord) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO experiments (
+                    experiment_id, created_at_ns, git_commit, workload_name, hypothesis,
+                    metric_name, higher_is_better, repetitions,
+                    baseline_config_json, treatment_config_json,
+                    baseline_values_json, treatment_values_json,
+                    baseline_device, treatment_device, comparison_json, verdict
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    experiment.experiment_id,
+                    experiment.created_at_ns,
+                    experiment.git_commit,
+                    experiment.workload_name,
+                    experiment.hypothesis,
+                    experiment.metric_name,
+                    int(experiment.higher_is_better),
+                    experiment.repetitions,
+                    json.dumps(experiment.baseline_config),
+                    json.dumps(experiment.treatment_config),
+                    json.dumps(experiment.baseline_values),
+                    json.dumps(experiment.treatment_values),
+                    experiment.baseline_device,
+                    experiment.treatment_device,
+                    json.dumps(experiment.comparison),
+                    experiment.verdict,
+                ),
+            )
+
+    def get(self, experiment_id: str) -> Optional[ExperimentRecord]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM experiments WHERE experiment_id = ?", (experiment_id,)
+            ).fetchone()
+            return _row_to_experiment(row) if row is not None else None
+
+    def list(self, workload_name: Optional[str] = None, limit: int = 50) -> list[ExperimentRecord]:
+        with self._connect() as conn:
+            if workload_name is not None:
+                rows = conn.execute(
+                    "SELECT * FROM experiments WHERE workload_name = ? ORDER BY created_at_ns DESC LIMIT ?",
+                    (workload_name, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM experiments ORDER BY created_at_ns DESC LIMIT ?", (limit,)
+                ).fetchall()
+            return [_row_to_experiment(r) for r in rows]
 
 
 def default_db_path() -> Path:
