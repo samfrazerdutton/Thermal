@@ -270,6 +270,25 @@ class HardwareReport:
     toolchain: ToolchainInfo
     software: SoftwareInfo
 
+    def to_dict(self) -> dict:
+        return {
+            "cpu": vars(self.cpu),
+            "gpu": {
+                k: v.to_dict() if hasattr(v, "to_dict") else v
+                for k, v in vars(self.gpu).items()
+                if k != "telemetry"
+            }
+            | {"telemetry": {k: v.to_dict() for k, v in self.gpu.telemetry.items()}},
+            "toolchain": {k: v.to_dict() for k, v in vars(self.toolchain).items()},
+            "software": {
+                "os_name": self.software.os_name,
+                "os_version": self.software.os_version,
+                "python_version": self.software.python_version,
+                "torch_installed": self.software.torch_installed.to_dict(),
+                "torch_cuda": self.software.torch_cuda.to_dict(),
+            },
+        }
+
 
 def collect_hardware_report() -> HardwareReport:
     return HardwareReport(

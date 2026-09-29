@@ -1,12 +1,10 @@
 # services/
 
-Server-mode components, built from Phase 12 onward.
-
 | Directory | Purpose |
 |---|---|
-| `api/` | FastAPI service (`/api/health`, `/api/hardware`, `/api/runs`, `/api/experiments`, ...) |
-| `worker/` | Background workload/experiment execution |
-| `scheduler/` | Experiment queue and multi-run scheduling |
+| `api/` | FastAPI service — implemented (Phase 12). `thermal serve` runs it. Every endpoint calls the same `thermal.runner`/`thermal.storage` code as the CLI, so results never diverge between the two front ends. Local mode: no auth, SQLite storage, synchronous execution (a `POST /api/workloads/run` blocks until the run finishes — there is no background queue yet). |
+| `worker/` | Not implemented. Background/async workload execution for long-running jobs, needed once Phase 14 (live streaming) or true multi-user server mode lands. |
+| `scheduler/` | Not implemented. Experiment queue and multi-run scheduling for server/distributed mode (Phase 18). |
 
-Local single-user mode (the CLI, Phases 0–11) does not require any of these — they
-exist for the web console and multi-user/server deployments.
+Local single-user mode (the CLI) doesn't require `worker/` or `scheduler/` — only the
+API does, and only once requests need to run outside the request/response cycle.

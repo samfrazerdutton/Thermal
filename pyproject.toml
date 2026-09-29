@@ -21,17 +21,18 @@ dependencies = [
     "nvidia-ml-py>=12.0",
     "jsonschema>=4.20",
     "torch",
+    "uvicorn>=0.30",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-cov", "ninja>=1.11"]
+dev = ["pytest>=8.0", "pytest-cov", "ninja>=1.11", "httpx>=0.27"]
 
 [project.scripts]
 thermal = "thermal.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["python"]
+where = ["python", "services"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration"]
-pythonpath = ["python"]
+pythonpath = ["python", "services"]

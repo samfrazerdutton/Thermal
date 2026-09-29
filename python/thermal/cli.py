@@ -6,7 +6,6 @@ import json as jsonlib
 import shutil
 import subprocess
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
@@ -15,9 +14,8 @@ import typer
 from analysis.baseline import InsufficientSamplesError, compute_baseline
 from thermal.causal import build_graph_from_experiments
 from thermal.counterfactual import experiment_command_for, generate_hypotheses
-from thermal.diagnosis import BottleneckClass, classify, features_from_telemetry
+from thermal.diagnosis import BottleneckClass
 from thermal.doctor import CheckStatus, core_ready, run_doctor
-from thermal.experiment import ExperimentSpec, run_experiment
 from thermal.hardware import collect_hardware_report
 from thermal.optimization import grid_search
 from thermal.native_bench import (
@@ -30,6 +28,7 @@ from thermal.native_bench import (
     is_built,
     run_kernel_bench,
 )
+from thermal.runner import run_and_store_experiment, run_and_store_workload
 from thermal.storage import (
     ExperimentRecord,
     ExperimentRepository,
@@ -38,7 +37,7 @@ from thermal.storage import (
     default_db_path,
 )
 from thermal.telemetry import TelemetryCollector
-from thermal.workload import WorkloadRegistry, run_workload
+from thermal.workload import WorkloadRegistry
 
 
 def _parse_scalar(value: str):
@@ -184,54 +183,25 @@ def workload_run(
     params = _parse_params(param)
 
     try:
-        workload_cls = WorkloadRegistry.get(name)
+        outcome = run_and_store_workload(name, params, samples=samples, warmup=warmup)
     except KeyError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1)
 
-    instance = workload_cls(params)
-    if samples is not None or warmup is not None:
-        instance.spec = instance.spec.__class__(
-            **{
-                **instance.spec.__dict__,
-                "warmup_iterations": warmup if warmup is not None else instance.spec.warmup_iterations,
-                "measurement_iterations": samples if samples is not None else instance.spec.measurement_iterations,
-            }
-        )
-
-    typer.echo(f"Running '{name}' - warmup={instance.spec.warmup_iterations} measured={instance.spec.measurement_iterations}")
-
-    telemetry = TelemetryCollector(interval_seconds=0.2)
-    telemetry.start()
-    try:
-        result = run_workload(instance)
-    finally:
-        telemetry.stop()
-
-    typer.echo(f"\nBASELINE\nDevice: {result.device}\n")
-    numeric_keys = [
-        k
-        for k in result.per_iteration_metrics[0]
-        if k != "device" and isinstance(result.per_iteration_metrics[0].get(k), (int, float))
-    ]
-    baseline_metrics: dict = {}
-    for key in numeric_keys:
-        values = [m[key] for m in result.per_iteration_metrics if isinstance(m.get(key), (int, float))]
-        try:
-            baseline = compute_baseline(values, metric_name=key)
-        except InsufficientSamplesError as exc:
-            typer.echo(f"{key}: {exc}\n")
-            continue
-        baseline_metrics[key] = asdict(baseline)
+    record = outcome.record
+    typer.echo(
+        f"Running '{name}' - warmup={record.warmup_iterations} measured={record.measurement_iterations}"
+    )
+    typer.echo(f"\nBASELINE\nDevice: {record.device}\n")
+    for baseline in outcome.baselines.values():
         typer.echo(baseline.summary_text())
         typer.echo()
 
     if output is not None:
-        output.write_text(jsonlib.dumps([m for m in result.per_iteration_metrics], indent=2))
-        typer.echo(f"Wrote {len(result.per_iteration_metrics)} iteration records -> {output}")
+        output.write_text(jsonlib.dumps(outcome.per_iteration_metrics, indent=2))
+        typer.echo(f"Wrote {len(outcome.per_iteration_metrics)} iteration records -> {output}")
 
-    features = features_from_telemetry(telemetry.samples)
-    diagnosis = classify(features)
+    diagnosis = outcome.diagnosis
     typer.echo("DIAGNOSIS")
     typer.echo(f"  {diagnosis.bottleneck.value}  (confidence: {diagnosis.confidence:.0%})")
     typer.echo(f"  {diagnosis.rationale}")
@@ -241,41 +211,7 @@ def workload_run(
         typer.echo(f"  not measurable on this run: {', '.join(diagnosis.missing_features)}")
     typer.echo()
 
-    telemetry_dir = default_db_path().parent / "telemetry"
-    telemetry_dir.mkdir(parents=True, exist_ok=True)
-
-    report = collect_hardware_report()
-    run_record = RunRecord.new(
-        workload_name=instance.spec.name,
-        workload_version=instance.spec.version,
-        device=result.device,
-        warmup_iterations=result.warmup_iterations,
-        measurement_iterations=result.measurement_iterations,
-        configuration=instance.params,
-        hardware_fingerprint={
-            "cpu_name": report.cpu.name,
-            "gpu_name": report.gpu.name,
-            "gpu_driver_version": report.gpu.driver_version,
-            "cuda_driver_version": report.gpu.cuda_driver_version,
-            "os": report.software.os_name,
-        },
-        metrics=baseline_metrics,
-        git_commit=_git_commit(),
-        diagnosis={
-            "bottleneck": diagnosis.bottleneck.value,
-            "confidence": diagnosis.confidence,
-            "rationale": diagnosis.rationale,
-            "evidence": [asdict(e) for e in diagnosis.evidence],
-            "missing_features": diagnosis.missing_features,
-        },
-    )
-    telemetry_path = telemetry_dir / f"{run_record.run_id}.jsonl"
-    telemetry.write_jsonl(telemetry_path)
-    run_record.telemetry_path = str(telemetry_path)
-
-    repo = SQLiteRunRepository(default_db_path())
-    repo.save(run_record)
-    typer.echo(f"Saved run {run_record.run_id} -> {default_db_path()}")
+    typer.echo(f"Saved run {record.run_id} -> {default_db_path()}")
 
 
 def _yes_no(value: bool) -> str:
@@ -288,29 +224,7 @@ def hardware(json: bool = typer.Option(False, "--json", help="emit machine-reada
     report = collect_hardware_report()
 
     if json:
-        typer.echo(
-            jsonlib.dumps(
-                {
-                    "cpu": vars(report.cpu),
-                    "gpu": {
-                        k: v.to_dict() if hasattr(v, "to_dict") else v
-                        for k, v in vars(report.gpu).items()
-                        if k != "telemetry"
-                    }
-                    | {"telemetry": {k: v.to_dict() for k, v in report.gpu.telemetry.items()}},
-                    "toolchain": {k: v.to_dict() for k, v in vars(report.toolchain).items()},
-                    "software": {
-                        "os_name": report.software.os_name,
-                        "os_version": report.software.os_version,
-                        "python_version": report.software.python_version,
-                        "torch_installed": report.software.torch_installed.to_dict(),
-                        "torch_cuda": report.software.torch_cuda.to_dict(),
-                    },
-                },
-                indent=2,
-                default=str,
-            )
-        )
+        typer.echo(jsonlib.dumps(report.to_dict(), indent=2, default=str))
         return
 
     typer.echo("THERMAL HARDWARE\n")
@@ -423,49 +337,28 @@ def experiment_run(
     hypothesis: str = typer.Option("", "--hypothesis", help="one-sentence hypothesis being tested"),
 ) -> None:
     """Run baseline vs. treatment in strict alternation (ABAB), then verify statistically."""
-    spec = ExperimentSpec(
-        workload_name=workload,
-        baseline_params=_parse_params(baseline_param),
-        treatment_params=_parse_params(treatment_param),
-        metric_name=metric,
-        higher_is_better=not lower_is_better,
-        repetitions=repetitions,
-        warmup_iterations=warmup,
-        hypothesis=hypothesis,
-    )
-
     if hypothesis:
         typer.echo(f"HYPOTHESIS\n{hypothesis}\n")
 
     try:
-        result = run_experiment(spec)
+        outcome = run_and_store_experiment(
+            workload_name=workload,
+            baseline_params=_parse_params(baseline_param),
+            treatment_params=_parse_params(treatment_param),
+            metric_name=metric,
+            higher_is_better=not lower_is_better,
+            repetitions=repetitions,
+            warmup_iterations=warmup,
+            hypothesis=hypothesis,
+        )
     except (KeyError, ValueError) as exc:
         typer.echo(f"Experiment failed: {exc}")
         raise typer.Exit(code=1)
 
+    result = outcome.result
     typer.echo(f"Baseline device: {result.baseline_device}  Treatment device: {result.treatment_device}\n")
     typer.echo(result.comparison.summary_text())
-
-    from dataclasses import asdict as _asdict
-
-    record = ExperimentRecord.new(
-        workload_name=workload,
-        metric_name=metric,
-        higher_is_better=not lower_is_better,
-        repetitions=repetitions,
-        baseline_config=spec.baseline_params,
-        treatment_config=spec.treatment_params,
-        baseline_values=result.baseline_values,
-        treatment_values=result.treatment_values,
-        baseline_device=result.baseline_device,
-        treatment_device=result.treatment_device,
-        comparison=_asdict(result.comparison),
-        verdict=result.comparison.verdict.value,
-        hypothesis=hypothesis,
-        git_commit=_git_commit(),
-    )
-    ExperimentRepository(default_db_path()).save(record)
-    typer.echo(f"\nSaved experiment {record.experiment_id} -> {default_db_path()}")
+    typer.echo(f"\nSaved experiment {outcome.record.experiment_id} -> {default_db_path()}")
 
 
 @experiment_app.command("list")
@@ -585,6 +478,19 @@ def optimize(
     typer.echo(result.summary_text())
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+    reload: bool = typer.Option(False, "--reload", help="auto-reload on source changes (development only)"),
+) -> None:
+    """Start the THERMAL FastAPI service (local mode: no auth, SQLite storage)."""
+    import uvicorn
+
+    typer.echo(f"THERMAL API: http://{host}:{port}/docs")
+    uvicorn.run("api.main:app", host=host, port=port, reload=reload)
+
+
 database_app = typer.Typer(help="Inspect stored runs (SQLite local mode).", no_args_is_help=True)
 app.add_typer(database_app, name="database")
 
@@ -688,7 +594,6 @@ def diagnose(run_id: str = typer.Argument("latest", help="run id, or 'latest'"))
 
 _NOT_IMPLEMENTED = [
     "report",
-    "serve",
     "similar",
     "compare",
     "research",
