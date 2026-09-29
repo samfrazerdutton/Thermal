@@ -19,6 +19,7 @@ dependencies = [
     "pyarrow>=14.0",
     "fastapi>=0.110",
     "nvidia-ml-py>=12.0",
+    "jsonschema>=4.20",
 ]
 
 [project.optional-dependencies]

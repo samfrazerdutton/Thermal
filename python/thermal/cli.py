@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json as jsonlib
+import time
+from pathlib import Path
+from typing import Optional
 
 import typer
 
 from thermal.doctor import CheckStatus, core_ready, run_doctor
 from thermal.hardware import collect_hardware_report
+from thermal.telemetry import TelemetryCollector
 
 app = typer.Typer(
     name="thermal",
@@ -105,9 +109,48 @@ def doctor() -> None:
         raise typer.Exit(code=1)
 
 
+@app.command()
+def profile(
+    duration: float = typer.Option(5.0, "--duration", help="seconds to sample for"),
+    interval: float = typer.Option(0.5, "--interval", help="seconds between samples"),
+    pid: Optional[int] = typer.Option(None, "--pid", help="also track this process (default: none)"),
+    output: Path = typer.Option(Path("thermal_profile.jsonl"), "--output", help="output file (.jsonl or .parquet)"),
+) -> None:
+    """Sample real CPU/GPU/process telemetry for a fixed duration and write it out.
+
+    This is system-wide hardware sampling, independent of any workload plugin
+    (the workload runner is Phase 3 — see docs/roadmap.md). Useful today to
+    verify telemetry collection against real hardware.
+    """
+    collector = TelemetryCollector(pid=pid, interval_seconds=interval)
+    typer.echo(f"Sampling every {interval}s for {duration}s ...")
+    collector.start()
+    try:
+        time.sleep(duration)
+    finally:
+        collector.stop()
+
+    samples = collector.samples
+    if output.suffix == ".parquet":
+        collector.write_parquet(output)
+    else:
+        collector.write_jsonl(output)
+
+    typer.echo(f"Collected {len(samples)} samples -> {output}")
+    if samples:
+        last = samples[-1]
+        typer.echo(f"Last sample: CPU {last.cpu.utilization_percent:.1f}%", nl=False)
+        if last.gpu is not None:
+            typer.echo(
+                f"  GPU {last.gpu.utilization_percent:.0f}%  "
+                f"mem {last.gpu.memory_used_mb:.0f}MB  temp {last.gpu.temperature_c:.0f}C"
+            )
+        else:
+            typer.echo("  GPU: unavailable")
+
+
 _NOT_IMPLEMENTED = [
     "workload",
-    "profile",
     "diagnose",
     "experiment",
     "optimize",
