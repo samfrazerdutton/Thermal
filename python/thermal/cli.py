@@ -13,6 +13,7 @@ from typing import Optional
 import typer
 
 from analysis.baseline import InsufficientSamplesError, compute_baseline
+from thermal.diagnosis import classify, features_from_telemetry
 from thermal.doctor import CheckStatus, core_ready, run_doctor
 from thermal.hardware import collect_hardware_report
 from thermal.storage import RunRecord, SQLiteRunRepository, default_db_path
@@ -95,7 +96,13 @@ def workload_run(
         )
 
     typer.echo(f"Running '{name}' - warmup={instance.spec.warmup_iterations} measured={instance.spec.measurement_iterations}")
-    result = run_workload(instance)
+
+    telemetry = TelemetryCollector(interval_seconds=0.2)
+    telemetry.start()
+    try:
+        result = run_workload(instance)
+    finally:
+        telemetry.stop()
 
     typer.echo(f"\nBASELINE\nDevice: {result.device}\n")
     numeric_keys = [
@@ -119,6 +126,20 @@ def workload_run(
         output.write_text(jsonlib.dumps([m for m in result.per_iteration_metrics], indent=2))
         typer.echo(f"Wrote {len(result.per_iteration_metrics)} iteration records -> {output}")
 
+    features = features_from_telemetry(telemetry.samples)
+    diagnosis = classify(features)
+    typer.echo("DIAGNOSIS")
+    typer.echo(f"  {diagnosis.bottleneck.value}  (confidence: {diagnosis.confidence:.0%})")
+    typer.echo(f"  {diagnosis.rationale}")
+    for ev in diagnosis.evidence:
+        typer.echo(f"    evidence: {ev.feature} = {ev.value:.2f} ({ev.comparison} {ev.threshold})")
+    if diagnosis.missing_features:
+        typer.echo(f"  not measurable on this run: {', '.join(diagnosis.missing_features)}")
+    typer.echo()
+
+    telemetry_dir = default_db_path().parent / "telemetry"
+    telemetry_dir.mkdir(parents=True, exist_ok=True)
+
     report = collect_hardware_report()
     run_record = RunRecord.new(
         workload_name=instance.spec.name,
@@ -136,7 +157,18 @@ def workload_run(
         },
         metrics=baseline_metrics,
         git_commit=_git_commit(),
+        diagnosis={
+            "bottleneck": diagnosis.bottleneck.value,
+            "confidence": diagnosis.confidence,
+            "rationale": diagnosis.rationale,
+            "evidence": [asdict(e) for e in diagnosis.evidence],
+            "missing_features": diagnosis.missing_features,
+        },
     )
+    telemetry_path = telemetry_dir / f"{run_record.run_id}.jsonl"
+    telemetry.write_jsonl(telemetry_path)
+    run_record.telemetry_path = str(telemetry_path)
+
     repo = SQLiteRunRepository(default_db_path())
     repo.save(run_record)
     typer.echo(f"Saved run {run_record.run_id} -> {default_db_path()}")
@@ -307,10 +339,48 @@ def database_show(run_id: str) -> None:
     typer.echo()
     for metric_name, stats in run.metrics.items():
         typer.echo(f"{metric_name}: mean={stats['mean']:.4g} median={stats['median']:.4g} p95={stats['p95']:.4g} n={stats['n']}")
+    if run.diagnosis:
+        typer.echo(f"\nDiagnosis: {run.diagnosis['bottleneck']} (confidence {run.diagnosis['confidence']:.0%})")
+        typer.echo(f"  {run.diagnosis['rationale']}")
+
+
+def _resolve_run(run_id: str) -> "RunRecord":
+    repo = SQLiteRunRepository(default_db_path())
+    if run_id == "latest":
+        runs = repo.list(limit=1)
+        if not runs:
+            typer.echo("No runs stored yet. Run `thermal workload run <name>` first.")
+            raise typer.Exit(code=1)
+        return runs[0]
+    run = repo.get(run_id)
+    if run is None:
+        typer.echo(f"No run found with id {run_id}")
+        raise typer.Exit(code=1)
+    return run
+
+
+@app.command()
+def diagnose(run_id: str = typer.Argument("latest", help="run id, or 'latest'")) -> None:
+    """Show the stored diagnosis for a run (computed when the run was executed)."""
+    run = _resolve_run(run_id)
+    if not run.diagnosis:
+        typer.echo(f"Run {run.run_id} has no stored diagnosis.")
+        raise typer.Exit(code=1)
+
+    typer.echo("ROOT CAUSE\n")
+    typer.echo(f"{run.diagnosis['bottleneck']}")
+    typer.echo(f"\nConfidence: {run.diagnosis['confidence']:.0%}\n")
+    typer.echo("Evidence:")
+    for ev in run.diagnosis["evidence"]:
+        typer.echo(f"  {ev['feature']:<40} {ev['value']:.2f} ({ev['comparison']} {ev['threshold']})")
+    if run.diagnosis["missing_features"]:
+        typer.echo(f"\nNot measurable on this run: {', '.join(run.diagnosis['missing_features'])}")
+    typer.echo(f"\nWHY?\n{run.diagnosis['rationale']}")
+    if run.telemetry_path:
+        typer.echo(f"\nRaw telemetry: {run.telemetry_path}")
 
 
 _NOT_IMPLEMENTED = [
-    "diagnose",
     "experiment",
     "optimize",
     "report",

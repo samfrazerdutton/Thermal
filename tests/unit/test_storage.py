@@ -76,3 +76,51 @@ def test_repository_persists_across_reopen(tmp_path):
     fetched = reopened.get(record.run_id)
     assert fetched is not None
     assert fetched.run_id == record.run_id
+
+
+def test_diagnosis_field_roundtrips(tmp_path):
+    repo = SQLiteRunRepository(tmp_path / "thermal.sqlite3")
+    record = _make_record(diagnosis={"bottleneck": "MEMORY_BOUND", "confidence": 0.9})
+    repo.save(record)
+    fetched = repo.get(record.run_id)
+    assert fetched.diagnosis == {"bottleneck": "MEMORY_BOUND", "confidence": 0.9}
+
+
+def test_diagnosis_defaults_to_none(tmp_path):
+    repo = SQLiteRunRepository(tmp_path / "thermal.sqlite3")
+    record = _make_record()
+    repo.save(record)
+    fetched = repo.get(record.run_id)
+    assert fetched.diagnosis is None
+
+
+def test_migration_adds_diagnosis_column_to_pre_existing_db(tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "old.sqlite3"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE runs (
+            run_id TEXT PRIMARY KEY,
+            created_at_ns INTEGER NOT NULL,
+            git_commit TEXT,
+            workload_name TEXT NOT NULL,
+            workload_version TEXT NOT NULL,
+            device TEXT NOT NULL,
+            warmup_iterations INTEGER NOT NULL,
+            measurement_iterations INTEGER NOT NULL,
+            configuration_json TEXT NOT NULL,
+            hardware_fingerprint_json TEXT NOT NULL,
+            metrics_json TEXT NOT NULL,
+            telemetry_path TEXT
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    repo = SQLiteRunRepository(db_path)  # should migrate, not crash
+    record = _make_record(diagnosis={"bottleneck": "COMPUTE_BOUND"})
+    repo.save(record)
+    assert repo.get(record.run_id).diagnosis == {"bottleneck": "COMPUTE_BOUND"}

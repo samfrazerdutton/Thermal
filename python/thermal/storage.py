@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS runs (
     configuration_json TEXT NOT NULL,
     hardware_fingerprint_json TEXT NOT NULL,
     metrics_json TEXT NOT NULL,
-    telemetry_path TEXT
+    telemetry_path TEXT,
+    diagnosis_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_runs_workload ON runs(workload_name);
@@ -54,6 +55,7 @@ class RunRecord:
     hardware_fingerprint: dict[str, Any]
     metrics: dict[str, Any]
     telemetry_path: Optional[str] = None
+    diagnosis: Optional[dict[str, Any]] = None
 
     @classmethod
     def new(
@@ -68,9 +70,11 @@ class RunRecord:
         metrics: dict[str, Any],
         git_commit: Optional[str] = None,
         telemetry_path: Optional[str] = None,
+        diagnosis: Optional[dict[str, Any]] = None,
+        run_id: Optional[str] = None,
     ) -> "RunRecord":
         return cls(
-            run_id=str(uuid.uuid4()),
+            run_id=run_id or str(uuid.uuid4()),
             created_at_ns=time.time_ns(),
             git_commit=git_commit,
             workload_name=workload_name,
@@ -82,6 +86,7 @@ class RunRecord:
             hardware_fingerprint=hardware_fingerprint,
             metrics=metrics,
             telemetry_path=telemetry_path,
+            diagnosis=diagnosis,
         )
 
 
@@ -113,6 +118,7 @@ def _row_to_record(row: sqlite3.Row) -> RunRecord:
         hardware_fingerprint=json.loads(row["hardware_fingerprint_json"]),
         metrics=json.loads(row["metrics_json"]),
         telemetry_path=row["telemetry_path"],
+        diagnosis=json.loads(row["diagnosis_json"]) if row["diagnosis_json"] else None,
     )
 
 
@@ -122,6 +128,15 @@ class SQLiteRunRepository(RunRepository):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA_SQL)
+            self._migrate(conn)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """Minimal additive migration: add columns introduced after the initial
+        schema to any pre-existing database file rather than requiring a wipe."""
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+        if "diagnosis_json" not in existing:
+            conn.execute("ALTER TABLE runs ADD COLUMN diagnosis_json TEXT")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -141,8 +156,9 @@ class SQLiteRunRepository(RunRepository):
                 INSERT INTO runs (
                     run_id, created_at_ns, git_commit, workload_name, workload_version,
                     device, warmup_iterations, measurement_iterations,
-                    configuration_json, hardware_fingerprint_json, metrics_json, telemetry_path
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    configuration_json, hardware_fingerprint_json, metrics_json, telemetry_path,
+                    diagnosis_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run.run_id,
@@ -157,6 +173,7 @@ class SQLiteRunRepository(RunRepository):
                     json.dumps(run.hardware_fingerprint),
                     json.dumps(run.metrics),
                     run.telemetry_path,
+                    json.dumps(run.diagnosis) if run.diagnosis is not None else None,
                 ),
             )
 
