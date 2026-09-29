@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+build/
+dist/
+
+# Native build artifacts
+cmake-build*/
+native/build/
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+!native/**/CMakeLists.txt
+
+# Node / web
+apps/web/node_modules/
+apps/web/dist/
+apps/web/.vite/
+
+# THERMAL local data (never commit real run data by accident)
+*.sqlite3
+*.parquet
+thermal.db
+/datasets/*
+!/datasets/README.md
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.*
+!.env.example

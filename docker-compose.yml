@@ -1,0 +1,32 @@
+# Server-mode deployment (Phase 12+). Local CLI usage needs none of this.
+#
+# Not yet functional: services/api and services/worker have no application code
+# as of Phase 1 (see docs/roadmap.md). This file documents the intended shape of
+# server mode and will be wired up to real Dockerfiles when Phase 12 lands.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: thermal
+      POSTGRES_USER: thermal
+      POSTGRES_PASSWORD: ${THERMAL_DB_PASSWORD:?set THERMAL_DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - thermal-postgres-data:/var/lib/postgresql/data
+
+  # api:
+  #   build: ./deployments/docker/api.Dockerfile   # added in Phase 12
+  #   depends_on: [postgres]
+  #   environment:
+  #     DATABASE_URL: postgresql://thermal:${THERMAL_DB_PASSWORD}@postgres:5432/thermal
+  #   ports:
+  #     - "8000:8000"
+
+  # worker:
+  #   build: ./deployments/docker/worker.Dockerfile  # added in Phase 12
+  #   depends_on: [postgres]
+
+volumes:
+  thermal-postgres-data:
