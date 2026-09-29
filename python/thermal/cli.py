@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json as jsonlib
+import shutil
+import subprocess
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
@@ -12,8 +15,20 @@ import typer
 from analysis.baseline import InsufficientSamplesError, compute_baseline
 from thermal.doctor import CheckStatus, core_ready, run_doctor
 from thermal.hardware import collect_hardware_report
+from thermal.storage import RunRecord, SQLiteRunRepository, default_db_path
 from thermal.telemetry import TelemetryCollector
 from thermal.workload import WorkloadRegistry, run_workload
+
+
+def _git_commit() -> Optional[str]:
+    git = shutil.which("git")
+    if git is None:
+        return None
+    try:
+        result = subprocess.run([git, "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
 
 import workloads  # noqa: F401  (import registers all built-in workloads)
 
@@ -88,6 +103,7 @@ def workload_run(
         for k in result.per_iteration_metrics[0]
         if k != "device" and isinstance(result.per_iteration_metrics[0].get(k), (int, float))
     ]
+    baseline_metrics: dict = {}
     for key in numeric_keys:
         values = [m[key] for m in result.per_iteration_metrics if isinstance(m.get(key), (int, float))]
         try:
@@ -95,12 +111,35 @@ def workload_run(
         except InsufficientSamplesError as exc:
             typer.echo(f"{key}: {exc}\n")
             continue
+        baseline_metrics[key] = asdict(baseline)
         typer.echo(baseline.summary_text())
         typer.echo()
 
     if output is not None:
         output.write_text(jsonlib.dumps([m for m in result.per_iteration_metrics], indent=2))
         typer.echo(f"Wrote {len(result.per_iteration_metrics)} iteration records -> {output}")
+
+    report = collect_hardware_report()
+    run_record = RunRecord.new(
+        workload_name=instance.spec.name,
+        workload_version=instance.spec.version,
+        device=result.device,
+        warmup_iterations=result.warmup_iterations,
+        measurement_iterations=result.measurement_iterations,
+        configuration=instance.params,
+        hardware_fingerprint={
+            "cpu_name": report.cpu.name,
+            "gpu_name": report.gpu.name,
+            "gpu_driver_version": report.gpu.driver_version,
+            "cuda_driver_version": report.gpu.cuda_driver_version,
+            "os": report.software.os_name,
+        },
+        metrics=baseline_metrics,
+        git_commit=_git_commit(),
+    )
+    repo = SQLiteRunRepository(default_db_path())
+    repo.save(run_record)
+    typer.echo(f"Saved run {run_record.run_id} -> {default_db_path()}")
 
 
 def _yes_no(value: bool) -> str:
@@ -232,13 +271,50 @@ def profile(
             typer.echo("  GPU: unavailable")
 
 
+database_app = typer.Typer(help="Inspect stored runs (SQLite local mode).", no_args_is_help=True)
+app.add_typer(database_app, name="database")
+
+
+@database_app.command("list")
+def database_list(
+    workload: Optional[str] = typer.Option(None, "--workload", help="filter by workload name"),
+    limit: int = typer.Option(20, "--limit"),
+) -> None:
+    """List stored runs, most recent first."""
+    repo = SQLiteRunRepository(default_db_path())
+    runs = repo.list(workload_name=workload, limit=limit)
+    if not runs:
+        typer.echo(f"No runs stored yet in {default_db_path()}")
+        return
+    for run in runs:
+        typer.echo(f"{run.run_id}  {run.workload_name:<20} device={run.device:<8} n={run.measurement_iterations}  commit={run.git_commit or '-'}")
+
+
+@database_app.command("show")
+def database_show(run_id: str) -> None:
+    """Show full detail for one stored run."""
+    repo = SQLiteRunRepository(default_db_path())
+    run = repo.get(run_id)
+    if run is None:
+        typer.echo(f"No run found with id {run_id}")
+        raise typer.Exit(code=1)
+    typer.echo(f"Run: thermal://run/{run.run_id}")
+    typer.echo(f"Commit: {run.git_commit or 'unknown'}")
+    typer.echo(f"Workload: {run.workload_name} v{run.workload_version}")
+    typer.echo(f"Device: {run.device}")
+    typer.echo(f"Configuration: {run.configuration}")
+    typer.echo(f"Hardware: {run.hardware_fingerprint}")
+    typer.echo()
+    for metric_name, stats in run.metrics.items():
+        typer.echo(f"{metric_name}: mean={stats['mean']:.4g} median={stats['median']:.4g} p95={stats['p95']:.4g} n={stats['n']}")
+
+
 _NOT_IMPLEMENTED = [
     "diagnose",
     "experiment",
     "optimize",
     "report",
     "serve",
-    "database",
     "similar",
     "compare",
     "research",

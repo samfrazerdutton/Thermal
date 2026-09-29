@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://thermal.dev/schemas/run_manifest_v1.json",
+  "title": "THERMAL Run Manifest",
+  "description": "Everything needed to reproduce a single workload run: identity, hardware fingerprint, software versions, configuration, and the resulting metrics/baseline. schema_version is immutable once records exist against it.",
+  "type": "object",
+  "required": ["schema_version", "run_id", "created_at_ns", "git_commit", "workload", "hardware_fingerprint", "configuration"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "format": "uuid" },
+    "created_at_ns": { "type": "integer" },
+    "git_commit": { "type": ["string", "null"], "description": "null only when run outside a git checkout" },
+    "workload": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "hardware_fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu_name": { "type": ["string", "null"] },
+        "gpu_name": { "type": ["string", "null"] },
+        "gpu_driver_version": { "type": ["string", "null"] },
+        "cuda_driver_version": { "type": ["string", "null"] },
+        "os": { "type": "string" }
+      }
+    },
+    "software_versions": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "configuration": {
+      "type": "object",
+      "description": "The workload's resolved parameters for this run (defaults merged with overrides)."
+    },
+    "dataset_hash": { "type": ["string", "null"], "description": "sha256 of input dataset, null when the workload uses synthetic data" },
+    "environment_hash": { "type": ["string", "null"] },
+    "device": { "type": "string", "description": "actual execution device, e.g. cpu or cuda:0" },
+    "warmup_iterations": { "type": "integer" },
+    "measurement_iterations": { "type": "integer" },
+    "metrics": {
+      "type": "object",
+      "description": "metric_name -> baseline stats (see analysis.baseline.BaselineStats)",
+      "additionalProperties": { "type": "object" }
+    },
+    "per_iteration_metrics": {
+      "type": "array",
+      "items": { "type": "object" }
+    }
+  }
+}
