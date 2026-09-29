@@ -13,7 +13,8 @@ from typing import Optional
 import typer
 
 from analysis.baseline import InsufficientSamplesError, compute_baseline
-from thermal.diagnosis import classify, features_from_telemetry
+from thermal.counterfactual import experiment_command_for, generate_hypotheses
+from thermal.diagnosis import BottleneckClass, classify, features_from_telemetry
 from thermal.doctor import CheckStatus, core_ready, run_doctor
 from thermal.experiment import ExperimentSpec, run_experiment
 from thermal.hardware import collect_hardware_report
@@ -53,6 +54,27 @@ def _parse_params(param: list[str]) -> dict:
             except ValueError:
                 params[key] = value
     return params
+
+
+_LOWER_IS_BETTER_HINTS = ("duration", "latency", "time_ms", "time_seconds", "elapsed")
+_HIGHER_IS_BETTER_HINTS = ("gflops", "throughput", "bandwidth", "tokens_per_sec", "gbps")
+
+
+def _infer_primary_metric(metrics: dict) -> tuple[Optional[str], bool]:
+    """Pick the metric most useful to optimize and its direction, from naming
+    convention -- e.g. duration_seconds is lower-is-better, gflops is higher-
+    is-better. Falls back to the first metric, assumed higher-is-better, when
+    the name gives no hint (explicit is better than guessing, but a workload
+    author who follows the convention gets this right automatically)."""
+    for name in metrics:
+        lowered = name.lower()
+        if any(hint in lowered for hint in _HIGHER_IS_BETTER_HINTS):
+            return name, True
+    for name in metrics:
+        lowered = name.lower()
+        if any(hint in lowered for hint in _LOWER_IS_BETTER_HINTS):
+            return name, False
+    return (next(iter(metrics), None), True)
 
 
 def _git_commit() -> Optional[str]:
@@ -560,6 +582,30 @@ def diagnose(run_id: str = typer.Argument("latest", help="run id, or 'latest'"))
     typer.echo(f"\nWHY?\n{run.diagnosis['rationale']}")
     if run.telemetry_path:
         typer.echo(f"\nRaw telemetry: {run.telemetry_path}")
+
+    try:
+        workload_cls = WorkloadRegistry.get(run.workload_name)
+        known_params = set(workload_cls.spec.default_parameters.keys())
+    except KeyError:
+        known_params = set()
+
+    metric_name, higher_is_better = _infer_primary_metric(run.metrics)
+    if metric_name is not None and known_params:
+        bottleneck = BottleneckClass(run.diagnosis["bottleneck"])
+        hypotheses = generate_hypotheses(bottleneck, run.configuration, known_params)
+        actionable = [h for h in hypotheses if h.actionable]
+        if actionable:
+            typer.echo("\nTESTABLE HYPOTHESIS\n")
+            for h in actionable:
+                typer.echo(h.description)
+                cmd = experiment_command_for(
+                    h, run.workload_name, run.configuration, metric_name, higher_is_better=higher_is_better
+                )
+                typer.echo(f"\n[RUN EXPERIMENT]\n{cmd}\n")
+        else:
+            not_actionable = [h.reason_not_actionable for h in hypotheses if h.reason_not_actionable]
+            if not_actionable:
+                typer.echo(f"\nNo actionable hypothesis for this workload: {'; '.join(not_actionable)}")
 
 
 _NOT_IMPLEMENTED = [

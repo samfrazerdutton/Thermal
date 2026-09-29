@@ -14,7 +14,7 @@ before the next begins — no phase is "done" because its files exist.
 | 6 | Bottleneck classifier (deterministic, feature-based, no AI) | Done (first-generation heuristics; refine against Phase 40 golden experiments) |
 | 7 | CUDA benchmark suite (native/cuda kernel lab) | Done (vector_add, reduction, matmul: naive + optimized variants) |
 | 8 | Experiment engine (controlled A/B, randomization policy) | Done |
-| 9 | Counterfactual engine (hypothesis generation from bottleneck class) | Not started |
+| 9 | Counterfactual engine (hypothesis generation from bottleneck class) | Done |
 | 10 | Causal graph (evidence-linked, not correlation-only) | Not started |
 | 11 | Optimization search (grid/binary/coordinate descent, optional Bayesian) | Not started |
 | 12 | FastAPI service | Not started |
