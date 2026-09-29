@@ -14,11 +14,13 @@ from fastapi.testclient import TestClient
 def client(tmp_path, monkeypatch):
     db_path = tmp_path / "thermal.sqlite3"
 
+    import thermal.report as report_mod
     import thermal.runner as runner_mod
     import thermal.storage as storage_mod
 
     monkeypatch.setattr(storage_mod, "default_db_path", lambda: db_path)
     monkeypatch.setattr(runner_mod, "default_db_path", lambda: db_path)
+    monkeypatch.setattr(report_mod, "default_db_path", lambda: db_path)
 
     import api.main as api_main
 
@@ -147,6 +149,20 @@ def test_causal_graph_has_edge_after_clear_experiment(client):
     assert "edges" in response.json()
 
 
-def test_report_endpoint_returns_not_implemented(client):
-    response = client.get("/api/reports/some-id")
-    assert response.status_code == 501
+def test_report_endpoint_404_for_missing_id(client):
+    response = client.get("/api/reports/does-not-exist")
+    assert response.status_code == 404
+
+
+def test_report_endpoint_returns_markdown_for_real_run(client):
+    run_response = client.post(
+        "/api/workloads/run",
+        json={"workload_name": "vector_ops", "params": {"size_millions": 1}, "samples": 5, "warmup": 1},
+    )
+    run_id = run_response.json()["run"]["run_id"]
+
+    response = client.get(f"/api/reports/{run_id}")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert "# THERMAL Report" in response.text
+    assert run_id in response.text

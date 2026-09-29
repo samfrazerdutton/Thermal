@@ -18,6 +18,7 @@ from thermal.diagnosis import BottleneckClass
 from thermal.doctor import CheckStatus, core_ready, run_doctor
 from thermal.hardware import collect_hardware_report
 from thermal.optimization import grid_search
+from thermal.report import generate_report
 from thermal.native_bench import (
     KERNEL_NAMES,
     KernelBenchFailedError,
@@ -592,8 +593,30 @@ def diagnose(run_id: str = typer.Argument("latest", help="run id, or 'latest'"))
                 typer.echo(f"\nNo actionable hypothesis for this workload: {'; '.join(not_actionable)}")
 
 
+@app.command()
+def report(
+    record_id: str = typer.Argument("latest", help="run id, experiment id, or 'latest' (most recent run)"),
+    output: Optional[Path] = typer.Option(None, "--output", help="write to a file instead of stdout"),
+) -> None:
+    """Generate a Markdown report for a run or experiment."""
+    if record_id == "latest":
+        run = _resolve_run("latest")
+        record_id = run.run_id
+
+    try:
+        markdown = generate_report(record_id)
+    except KeyError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1)
+
+    if output is not None:
+        output.write_text(markdown, encoding="utf-8")
+        typer.echo(f"Wrote report -> {output}")
+    else:
+        typer.echo(markdown)
+
+
 _NOT_IMPLEMENTED = [
-    "report",
     "similar",
     "compare",
     "research",

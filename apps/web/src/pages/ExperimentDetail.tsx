@@ -1,4 +1,4 @@
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { CartesianGrid, Legend, Scatter, ScatterChart, Tooltip, XAxis, YAxis } from "recharts";
 import { ErrorState, LoadingState } from "../components/AsyncState";
 import { Panel } from "../components/Panel";
@@ -22,9 +22,14 @@ export function ExperimentDetail() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-lg text-[var(--color-text)]">{exp.workload_name}</h1>
-        {exp.hypothesis && <p className="mt-1 text-sm text-[var(--color-text-dim)]">{exp.hypothesis}</p>}
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-lg text-[var(--color-text)]">{exp.workload_name}</h1>
+          {exp.hypothesis && <p className="mt-1 text-sm text-[var(--color-text-dim)]">{exp.hypothesis}</p>}
+        </div>
+        <Link to={`/reports?id=${exp.experiment_id}`} className="text-sm text-[var(--color-signal)] hover:underline">
+          view report
+        </Link>
       </div>
 
       <div className="grid grid-cols-4 gap-4">

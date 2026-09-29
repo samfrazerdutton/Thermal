@@ -24,11 +24,13 @@ from dataclasses import asdict
 from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import PlainTextResponse
 
 from api.schemas import ExperimentRunRequest, OptimizeGridSearchRequest, WorkloadRunRequest
 from thermal.causal import build_graph_from_experiments
 from thermal.hardware import collect_hardware_report
 from thermal.optimization import grid_search
+from thermal.report import generate_report
 from thermal.runner import run_and_store_experiment, run_and_store_workload
 from thermal.storage import ExperimentRepository, SQLiteRunRepository, default_db_path
 from thermal.workload import WorkloadRegistry
@@ -338,9 +340,9 @@ def list_benchmarks(limit: int = 50) -> list[dict]:
     return [_run_record_to_dict(r) for r in repo.list(limit=limit)]
 
 
-@app.get("/api/reports/{report_id}")
-def get_report(report_id: str) -> dict:
-    raise HTTPException(
-        status_code=501,
-        detail="report generation is not implemented yet (see docs/roadmap.md Phase 15)",
-    )
+@app.get("/api/reports/{report_id}", response_class=PlainTextResponse)
+def get_report(report_id: str) -> str:
+    try:
+        return generate_report(report_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))

@@ -1,4 +1,4 @@
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { ErrorState, LoadingState } from "../components/AsyncState";
 import { Panel } from "../components/Panel";
 import { StatValue } from "../components/StatValue";
@@ -17,12 +17,17 @@ export function RunDetail({ focusDiagnosis = false }: { focusDiagnosis?: boolean
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-lg text-[var(--color-text)]">{run.workload_name}</h1>
-        <p className="mt-1 font-mono text-xs text-[var(--color-text-faint)]">
-          run {run.run_id} on {run.device}
-          {run.git_commit && ` · commit ${run.git_commit.slice(0, 7)}`}
-        </p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-lg text-[var(--color-text)]">{run.workload_name}</h1>
+          <p className="mt-1 font-mono text-xs text-[var(--color-text-faint)]">
+            run {run.run_id} on {run.device}
+            {run.git_commit && ` (commit ${run.git_commit.slice(0, 7)})`}
+          </p>
+        </div>
+        <Link to={`/reports?id=${run.run_id}`} className="text-sm text-[var(--color-signal)] hover:underline">
+          view report
+        </Link>
       </div>
 
       {diagnosis && (
