@@ -18,7 +18,7 @@ before the next begins — no phase is "done" because its files exist.
 | 10 | Causal graph (evidence-linked, not correlation-only) | Done |
 | 11 | Optimization search (grid/binary/coordinate descent, optional Bayesian) | Done (grid search + coordinate descent; Bayesian deferred) |
 | 12 | FastAPI service | Done (local mode: no auth, synchronous execution; report endpoint stubbed 501 pending Phase 15) |
-| 13 | React web console | Not started |
+| 13 | React web console | Done (Overview, Runs, Experiments, Workloads, Hardware, Benchmarks; Genome/Reports honest stubs) |
 | 14 | Live experiment streaming (WebSocket/SSE) | Not started |
 | 15 | Report generation (`thermal report`) | Not started |
 | 16 | Optional AI explanation layer (evidence-grounded, no fabrication, works without it) | Not started |

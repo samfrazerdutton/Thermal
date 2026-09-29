@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+@theme {
+  /* Ground and surfaces: a deliberately blue-slate dark, not a generic
+     near-black. Every color below maps to a real state in the product --
+     none are decorative. */
+  --color-ground: #0a1116;
+  --color-surface: #10181d;
+  --color-surface-raised: #141e24;
+  --color-hairline: #223038;
+  --color-hairline-strong: #2e4049;
+
+  --color-text: #e7edf0;
+  --color-text-dim: #8ea0a7;
+  --color-text-faint: #5c6d73;
+
+  /* Interactive: an oscilloscope-trace blue, used for links, focus, active
+     nav, and chart lines. */
+  --color-signal: #4fa8d8;
+  --color-signal-dim: #2f6f92;
+
+  /* Verdict colors -- reserved strictly for measured outcomes, never
+     decoration. Verified/improved uses NVIDIA's own green, tying the
+     "verified good" state to the subject hardware rather than an arbitrary
+     accent. */
+  --color-verified: #76b900;
+  --color-caution: #e8a33d;
+  --color-regression: #d6483d;
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  --radius-panel: 3px;
+}
+
+body {
+  background: var(--color-ground);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-signal-dim);
+  color: var(--color-text);
+}
+
+* {
+  scrollbar-color: var(--color-hairline-strong) transparent;
+}
+
+:focus-visible {
+  outline: 1.5px solid var(--color-signal);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
