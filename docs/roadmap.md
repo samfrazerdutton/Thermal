@@ -8,7 +8,7 @@ before the next begins — no phase is "done" because its files exist.
 | 0 | Repository foundation | Done |
 | 1 | Hardware detection (`thermal hardware`, `thermal doctor`) | Done |
 | 2 | Telemetry engine (continuous GPU/CPU/process sampling, versioned trace schema) | Done |
-| 3 | Workload runner (plugin architecture, first workloads) | Done (3 of 8 workloads: matmul, memory_bandwidth, vector_ops) |
+| 3 | Workload runner (plugin architecture, first workloads) | Done (all 8 workloads: matmul, memory_bandwidth, vector_ops, transformer_inference, kv_cache_stress, cpu_gpu_transfer, batch_size_scaling, compression_vs_transfer) |
 | 4 | Baseline statistics engine (warmup, repeated trials, CI, outlier detection) | Done |
 | 5 | Storage (SQLite local / Postgres server, Parquet telemetry, shared repository abstraction) | Done (SQLite local; Postgres deferred to Phase 12) |
 | 6 | Bottleneck classifier (deterministic, feature-based, no AI) | Done (first-generation heuristics; refine against Phase 40 golden experiments) |
@@ -35,7 +35,8 @@ nothing honest to display until the engine underneath it produces real evidence.
 
 ## Current gaps (see `docs/environment-report.md` for detection detail)
 
-- No CUDA-enabled PyTorch installed — blocks GPU-side transformer workloads (Phase 3).
+- ~~No CUDA-enabled PyTorch installed~~ **Resolved**: `torch==2.10.0+cu128` installed;
+  all workloads execute on `cuda:0`.
 - No C++ compiler on PATH outside a VS Developer Command Prompt — native builds
   (Phase 7) need a build script that locates and invokes `vcvarsall.bat`, or a CMake
   invocation using the Visual Studio generator.

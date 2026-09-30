@@ -47,10 +47,8 @@ instead of the separate directory the original plan sketched.
 
 THERMAL was built in 18 explicit phases (see [`docs/roadmap.md`](docs/roadmap.md)).
 All 18 are implemented, tested, and committed — nothing here is claimed to work
-without having been run first. The two deliberately narrower ones: Phase 3 ships 3
-of the 8 workloads the original design sketch named (matmul, memory_bandwidth,
-vector_ops — the rest are straightforward to add following the same interface), and
-Phase 18 implements real multi-process distributed dispatch but not multi-GPU/multi-node
+without having been run first. The one deliberately narrower one: Phase 18 implements
+real multi-process distributed dispatch but not multi-GPU/multi-node
 coordination, because this development machine has exactly one GPU and one node to
 verify that against.
 
@@ -59,7 +57,7 @@ Implemented, phase by phase:
 - **Phase 0 — Repository foundation**
 - **Phase 1 — Hardware detection** (`thermal hardware`, `thermal doctor`)
 - **Phase 2 — Telemetry engine** (`thermal profile`, versioned trace schema)
-- **Phase 3 — Workload runner** (`thermal workload list/run`; matmul, memory_bandwidth, vector_ops)
+- **Phase 3 — Workload runner** (`thermal workload list/run`; all 8 workloads from the original design: matmul, memory_bandwidth, vector_ops, transformer_inference, kv_cache_stress, cpu_gpu_transfer, batch_size_scaling, compression_vs_transfer)
 - **Phase 4 — Baseline statistics** (mean/median/CV/percentiles/bootstrap CI/outliers)
 - **Phase 5 — Storage** (`thermal database list/show`, SQLite local run repository)
 - **Phase 6 — Bottleneck classifier** (`thermal diagnose`, deterministic, no AI)
@@ -153,11 +151,17 @@ deterministic bottleneck classifier's thresholds and evidence model.
 
 Documented honestly rather than hidden:
 
-- Only 3 of the 8 workloads sketched in the original design exist (matmul,
-  memory_bandwidth, vector_ops) — transformer inference, KV-cache stress, CPU/GPU
-  transfer, batch-size scaling, and compression-vs-transfer are not implemented.
-  New workloads are straightforward: subclass `thermal.workload.Workload` and register
-  it (see `python/workloads/matmul.py` for the shortest example).
+- ~~Only 3 of the 8 workloads exist~~ **Fixed**: all 8 from the original design are now
+  implemented and registered (`thermal workload list`). `cpu_gpu_transfer` and
+  `compression_vs_transfer` genuinely require a CUDA device (there's no meaningful
+  host<->device transfer to measure without one) and raise `UnsupportedHardwareError`
+  honestly on CPU-only machines rather than faking a number. Running
+  `compression_vs_transfer` for real reproduced exactly the scenario the spec asks for:
+  compressing incompressible random float32 data before transfer was a **4156% regression**
+  in total pipeline time (p=2e-26) versus a raw transfer — compression is not assumed to
+  help, and here, measured, it very much doesn't. Adding a 9th workload is straightforward:
+  subclass `thermal.workload.Workload` and register it (see `python/workloads/matmul.py`
+  for the shortest example).
 - ~~Built-in workloads run on CPU~~ **Fixed**: the reference machine now has
   `torch==2.10.0+cu128` installed (`thermal doctor` reports `torch_cuda: 12.8`), so
   `matmul`/`memory_bandwidth`/`vector_ops` execute on `cuda:0` and `thermal hardware`'s
