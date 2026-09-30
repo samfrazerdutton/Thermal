@@ -92,6 +92,15 @@ thermal hardware   # real GPU/CPU/toolchain detection on your machine
 thermal doctor     # can this machine actually run THERMAL?
 ```
 
+`pip install -e .` alone pulls the default (CPU-only) PyTorch wheel from PyPI —
+`thermal doctor` will show `torch_cuda: unavailable` and workloads will honestly report
+`device: cpu`. To exercise an NVIDIA GPU, install a CUDA build afterward from
+[pytorch.org](https://pytorch.org/get-started/locally/), e.g. for CUDA 12.8:
+
+```bash
+python -m pip install torch --index-url https://download.pytorch.org/whl/cu128
+```
+
 Example, run on the reference development machine (RTX 2060, CUDA 13.2, Windows):
 
 ```text
@@ -149,9 +158,18 @@ Documented honestly rather than hidden:
   transfer, batch-size scaling, and compression-vs-transfer are not implemented.
   New workloads are straightforward: subclass `thermal.workload.Workload` and register
   it (see `python/workloads/matmul.py` for the shortest example).
-- Built-in workloads run on CPU on the reference machine — the installed PyTorch
-  build has no CUDA support (`thermal hardware` reports this explicitly), so `device`
-  in every result is honestly `cpu`, not a fabricated `cuda:0`.
+- ~~Built-in workloads run on CPU~~ **Fixed**: the reference machine now has
+  `torch==2.10.0+cu128` installed (`thermal doctor` reports `torch_cuda: 12.8`), so
+  `matmul`/`memory_bandwidth`/`vector_ops` execute on `cuda:0` and `thermal hardware`'s
+  GPU telemetry reflects real workload activity. One real limitation this surfaced:
+  telemetry samples every 200ms (`TelemetryCollector`'s default interval), so a workload
+  whose total measured runtime is shorter than that (e.g. a 2048×2048 matmul, ~5ms/iter)
+  can finish before a single sample lands mid-kernel, and the classifier honestly reports
+  `gpu_utilization_percent = 0.00` even though the GPU did the work — verified by
+  re-running the same workload at 8192×8192 (long enough per iteration to be sampled),
+  which correctly showed 31% GPU utilization. A future fix would sample at a much
+  higher frequency or hold the GPU busy across more back-to-back iterations before
+  each sample.
 - The bottleneck classifier (`thermal/diagnosis.py`) is first-generation, threshold-based
   heuristics, not validated against the golden experiments the original design sketch
   called for (deliberately-constructed memory-bound/compute-bound/transfer-bound/

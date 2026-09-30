@@ -27,7 +27,7 @@ machine on 2026-09-28. Nothing here is assumed or estimated.
 | Node.js | 25.6.1 |
 | GitHub CLI (`gh`) | Not found — git operations use plain `git` over HTTPS |
 | Python | 3.12.6 |
-| PyTorch | 2.10.0+cpu — **CPU-only build, no CUDA support installed** |
+| PyTorch | 2.10.0+cu128 — CUDA-enabled (installed from `download.pytorch.org/whl/cu128`; see note below) |
 | NVIDIA NVML bindings | `nvidia-ml-py` (installed during Phase 0; verified against the real GPU) |
 | pyarrow (Parquet) | 22.0.0 |
 | Nsight Systems (`nsys`) | Not found on PATH |
@@ -76,9 +76,16 @@ machine on 2026-09-28. Nothing here is assumed or estimated.
   put the pip-installed `ninja` package's script directory on PATH, configure with
   `-G Ninja`, build) so `native/cuda` builds with one command despite the default
   generator not working here.
-- **No GPU-enabled PyTorch.** The transformer-inference and KV-cache workloads (Phase 3+)
-  cannot exercise the GPU through PyTorch until a CUDA-enabled wheel is installed. This
-  is a deliberate, explicit gap — not silently worked around.
+- **GPU-enabled PyTorch: resolved.** The reference machine's driver (595.97) reports
+  CUDA 13.2, but PyTorch's official wheel index (as of this writing) only publishes
+  prebuilt wheels up through the cu128 (CUDA 12.8) tag — no cu130+ wheel exists yet.
+  Installed `torch==2.10.0+cu128` anyway: NVIDIA drivers are backward-compatible with
+  older CUDA runtimes, confirmed by `torch.cuda.is_available()` returning `True` and a
+  real `torch.randn(1024, 1024, device="cuda") @ ...` matmul executing correctly. The
+  wheel is a single ~2.9 GB self-contained download (this version bundles its CUDA
+  libraries rather than pulling separate `nvidia-*-cu12` packages) — installing it
+  required first clearing pip's HTTP cache (freed ~6.9 GB) because this machine's C:
+  drive was at 100% capacity with only 3.8 GB free.
 - **No `perf`.** Linux-only CPU counters (context switches via `perf`, hardware PMU
   counters) are unavailable on this platform; the CPU telemetry engine (Phase 2) will
   use `psutil` and mark perf-specific counters as `unavailable / linux-only`.
