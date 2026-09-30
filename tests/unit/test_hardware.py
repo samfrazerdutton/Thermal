@@ -10,6 +10,7 @@ from thermal.hardware import (
     detect_gpu,
     detect_software,
     detect_toolchain,
+    pcie_ceiling_kbps,
 )
 
 
@@ -62,3 +63,32 @@ def test_detect_software_reports_python_version():
     software = detect_software()
     assert software.python_version
     assert software.os_name
+
+
+def test_pcie_ceiling_kbps_gen3_x8_matches_real_published_spec():
+    # PCIe 3.0 is 985 MB/s per lane per direction (128b/130b encoding); this is
+    # the reference machine's actual negotiated link (see docs/environment-report.md).
+    assert pcie_ceiling_kbps(3, 8) == 985 * 8 * 1000.0
+
+
+def test_pcie_ceiling_kbps_scales_with_width():
+    assert pcie_ceiling_kbps(3, 16) == 2 * pcie_ceiling_kbps(3, 8)
+
+
+def test_pcie_ceiling_kbps_none_when_generation_or_width_unknown():
+    assert pcie_ceiling_kbps(None, 8) is None
+    assert pcie_ceiling_kbps(3, None) is None
+
+
+def test_pcie_ceiling_kbps_none_for_unrecognized_generation():
+    assert pcie_ceiling_kbps(99, 8) is None
+
+
+def test_gpu_info_reports_pcie_link_fields_when_available():
+    gpu = detect_gpu()
+    if gpu.available:
+        # Either both are real integers, or NVML genuinely couldn't read them --
+        # never a fabricated placeholder.
+        assert (gpu.pcie_link_generation is None) == (gpu.pcie_link_width is None) or (
+            isinstance(gpu.pcie_link_generation, int) and isinstance(gpu.pcie_link_width, int)
+        )

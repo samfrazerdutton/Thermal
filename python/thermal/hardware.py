@@ -74,6 +74,20 @@ def detect_cpu() -> CPUInfo:
     )
 
 
+#: Real, published PCI-SIG per-lane, per-direction bandwidth in MB/s for each
+#: PCIe generation (accounts for line coding overhead, e.g. Gen3's 128b/130b).
+#: Used to turn NVML's raw KB/s throughput reading into a genuine percentage
+#: of this GPU's actual negotiated link capacity, rather than leaving
+#: pcie_utilization_percent permanently unmeasurable.
+PCIE_LANE_MBPS = {1: 250, 2: 500, 3: 985, 4: 1969, 5: 3938}
+
+
+def pcie_ceiling_kbps(generation: Optional[int], width: Optional[int]) -> Optional[float]:
+    if generation is None or width is None or generation not in PCIE_LANE_MBPS:
+        return None
+    return PCIE_LANE_MBPS[generation] * width * 1000.0
+
+
 @dataclass
 class GPUInfo:
     available: bool
@@ -83,6 +97,8 @@ class GPUInfo:
     memory_total_mb: Optional[float] = None
     memory_used_mb: Optional[float] = None
     compute_capability: Optional[str] = None
+    pcie_link_generation: Optional[int] = None
+    pcie_link_width: Optional[int] = None
     telemetry: dict[str, Capability] = field(default_factory=dict)
     reason: Optional[str] = None
 
@@ -122,6 +138,17 @@ def detect_gpu() -> GPUInfo:
         except pynvml.NVMLError:
             compute_capability = None
 
+        # Current negotiated link, not the card's max capability -- a laptop
+        # or riser can (and this reference machine does) run at a narrower
+        # width than the GPU supports, and that's the real constraint on
+        # this system right now.
+        try:
+            pcie_link_generation = pynvml.nvmlDeviceGetCurrPcieLinkGeneration(handle)
+            pcie_link_width = pynvml.nvmlDeviceGetCurrPcieLinkWidth(handle)
+        except pynvml.NVMLError:
+            pcie_link_generation = None
+            pcie_link_width = None
+
         telemetry: dict[str, Capability] = {}
 
         def _try(name_: str, fn):
@@ -156,6 +183,8 @@ def detect_gpu() -> GPUInfo:
             memory_total_mb=mem.total / (1024 * 1024),
             memory_used_mb=mem.used / (1024 * 1024),
             compute_capability=compute_capability,
+            pcie_link_generation=pcie_link_generation,
+            pcie_link_width=pcie_link_width,
             telemetry=telemetry,
         )
     finally:

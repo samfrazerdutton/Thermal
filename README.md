@@ -174,10 +174,21 @@ Documented honestly rather than hidden:
   which correctly showed 31% GPU utilization. A future fix would sample at a much
   higher frequency or hold the GPU busy across more back-to-back iterations before
   each sample.
-- The bottleneck classifier (`thermal/diagnosis.py`) is first-generation, threshold-based
-  heuristics, not validated against the golden experiments the original design sketch
-  called for (deliberately-constructed memory-bound/compute-bound/transfer-bound/
-  launch-bound workloads) — that validation harness doesn't exist yet.
+- ~~The bottleneck classifier is not validated against golden experiments~~ **Fixed**:
+  `tests/benchmarks/test_golden_experiments.py` constructs real, continuous GPU bursts
+  deliberately built to be compute-, memory-, transfer-, or latency-bound and asserts
+  the classifier gets each one right. Doing this for real found and fixed two genuine
+  calibration bugs: the MEMORY_BOUND rule required low SM utilization, but a real
+  memory-bound kernel measured ~90%+ SM utilization *and* ~90%+ memory-bandwidth
+  utilization simultaneously (NVML's SM utilization reads high even while a kernel is
+  stalled on memory, so it isn't evidence against memory-bound); and the TRANSFER_BOUND
+  threshold (70% of the PCIe link ceiling) was never reached by a real pageable-memory
+  transfer, which plateaus around 58-62% because pageable transfers need an extra
+  host-side staging copy that pinned memory avoids. Both are fixed in
+  `thermal/diagnosis.py` with the real measurements documented inline. LAUNCH_OVERHEAD
+  and CAPACITY_BOUND remain unvalidated by a golden experiment (the former needs
+  kernel-level launch-overhead profiling this telemetry sampler doesn't do; the latter
+  is straightforward to add but wasn't built in this pass).
 - Native CUDA builds require a non-default CMake generator on Windows (Ninja, after
   loading the MSVC environment) because this machine's CUDA install has no Visual
   Studio integration — `scripts/build-native.ps1` automates it. See

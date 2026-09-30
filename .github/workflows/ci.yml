@@ -38,6 +38,8 @@ jobs:
           thermal workload run vector_ops --param size_millions=1 --samples 3 --warmup 1
           thermal diagnose latest
           thermal report latest
+      - name: Golden experiments (expect all skipped: no GPU on this runner)
+        run: python -m pytest tests/benchmarks -v
 
   frontend:
     name: Web console lint + build

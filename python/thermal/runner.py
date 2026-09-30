@@ -15,7 +15,7 @@ from typing import Any, Callable, Optional
 from analysis.baseline import BaselineStats, InsufficientSamplesError, compute_baseline
 from thermal.diagnosis import Diagnosis, classify, features_from_telemetry
 from thermal.experiment import ExperimentRunResult, ExperimentSpec, run_experiment
-from thermal.hardware import collect_hardware_report
+from thermal.hardware import collect_hardware_report, pcie_ceiling_kbps
 from thermal.storage import (
     ExperimentRecord,
     ExperimentRepository,
@@ -105,14 +105,14 @@ def run_and_store_workload(
         except InsufficientSamplesError:
             continue
 
-    features = features_from_telemetry(telemetry.samples)
+    report = collect_hardware_report()
+    ceiling = pcie_ceiling_kbps(report.gpu.pcie_link_generation, report.gpu.pcie_link_width)
+    features = features_from_telemetry(telemetry.samples, total_memory_mb=report.gpu.memory_total_mb, pcie_ceiling_kbps=ceiling)
     diagnosis = classify(features)
     emit("diagnosis_updated", {"bottleneck": diagnosis.bottleneck.value, "confidence": diagnosis.confidence})
 
     telemetry_dir = default_db_path().parent / "telemetry"
     telemetry_dir.mkdir(parents=True, exist_ok=True)
-
-    report = collect_hardware_report()
     record = RunRecord.new(
         workload_name=instance.spec.name,
         workload_version=instance.spec.version,
