@@ -11,6 +11,28 @@ from typing import Any, Callable, Optional
 
 from thermal.diagnosis import BottleneckClass
 
+_LOWER_IS_BETTER_HINTS = ("duration", "latency", "time_ms", "time_seconds", "elapsed")
+_HIGHER_IS_BETTER_HINTS = ("gflops", "throughput", "bandwidth", "tokens_per_sec", "gbps")
+
+
+def infer_primary_metric(metrics) -> tuple[Optional[str], bool]:
+    """Pick the metric most useful to optimize and its direction, from naming
+    convention -- e.g. duration_seconds is lower-is-better, gflops is higher-
+    is-better. Falls back to the first metric, assumed higher-is-better, when
+    the name gives no hint (explicit is better than guessing, but a workload
+    author who follows the convention gets this right automatically). Shared
+    by the CLI and the API so the two never pick a different metric/direction
+    for the same run."""
+    for name in metrics:
+        lowered = name.lower()
+        if any(hint in lowered for hint in _HIGHER_IS_BETTER_HINTS):
+            return name, True
+    for name in metrics:
+        lowered = name.lower()
+        if any(hint in lowered for hint in _LOWER_IS_BETTER_HINTS):
+            return name, False
+    return (next(iter(metrics), None), True)
+
 
 @dataclass(frozen=True)
 class Hypothesis:
@@ -199,3 +221,31 @@ def experiment_command_for(
         f"thermal experiment run {workload_name} {baseline_flags} {treatment_flags} "
         f"--metric {metric_name}{direction_flag} --hypothesis \"{hypothesis.description}\""
     )
+
+
+def experiment_request_for(
+    hypothesis: Hypothesis,
+    workload_name: str,
+    baseline_params: dict[str, Any],
+    metric_name: str,
+    higher_is_better: bool = True,
+    repetitions: int = 15,
+    warmup_iterations: int = 3,
+) -> Optional[dict[str, Any]]:
+    """The programmatic twin of experiment_command_for(): the same experiment,
+    as a dict shaped exactly like api.schemas.ExperimentRunRequest, so a caller
+    (the web console) can POST it directly to /api/jobs/experiments/run
+    instead of parsing a shell command back apart. None if not actionable."""
+    if not hypothesis.actionable or hypothesis.proposed_treatment_params is None:
+        return None
+
+    return {
+        "workload_name": workload_name,
+        "baseline_params": dict(baseline_params),
+        "treatment_params": {**baseline_params, **hypothesis.proposed_treatment_params},
+        "metric_name": metric_name,
+        "higher_is_better": higher_is_better,
+        "repetitions": repetitions,
+        "warmup_iterations": warmup_iterations,
+        "hypothesis": hypothesis.description,
+    }

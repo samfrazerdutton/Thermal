@@ -2,16 +2,23 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { api, type HardwareReport } from "../lib/api";
 
+// The six primary sections the product is actually organized around.
 const NAV = [
   { to: "/", label: "Overview", end: true },
-  { to: "/runs", label: "Runs" },
-  { to: "/experiments", label: "Experiments" },
-  { to: "/jobs", label: "Jobs" },
+  { to: "/investigate", label: "Investigate" },
   { to: "/workloads", label: "Workloads" },
+  { to: "/experiments", label: "Experiments" },
   { to: "/hardware", label: "Hardware" },
+  { to: "/reports", label: "Reports" },
+];
+
+// Supporting views, reachable but not competing for top-level attention --
+// still real, still fully functional, just not part of the core workflow.
+const SECONDARY_NAV = [
+  { to: "/runs", label: "Runs" },
+  { to: "/jobs", label: "Jobs" },
   { to: "/benchmarks", label: "Benchmarks" },
   { to: "/genome", label: "Genome" },
-  { to: "/reports", label: "Reports" },
   { to: "/settings", label: "Settings" },
 ];
 
@@ -57,6 +64,24 @@ export function Shell() {
               {item.label}
             </NavLink>
           ))}
+
+          <div className="mt-3 border-t border-[var(--color-hairline)] pt-3">
+            {SECONDARY_NAV.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  `block border-l-2 px-2.5 py-1 text-xs transition-colors ${
+                    isActive
+                      ? "border-[var(--color-signal)] bg-[var(--color-surface-raised)] text-[var(--color-text)]"
+                      : "border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-dim)]"
+                  }`
+                }
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </div>
         </nav>
         <div className="border-t border-[var(--color-hairline)] px-4 py-3 text-xs text-[var(--color-text-faint)]">
           <div className="flex items-center gap-1.5">

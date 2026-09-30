@@ -22,7 +22,7 @@ class VectorOpsWorkload(Workload):
         version="1.0.0",
         description="Elementwise c = a * b + a over a large vector, reports GFLOP/s.",
         hardware_requirements=HardwareRequirement(gpu_required=False),
-        default_parameters={"size_millions": 16, "dtype": "float32"},
+        default_parameters={"size_millions": 16, "dtype": "float32", "device": "auto"},
         warmup_iterations=3,
         measurement_iterations=10,
         output_metrics=("duration_seconds", "gflops"),
@@ -31,7 +31,7 @@ class VectorOpsWorkload(Workload):
     def setup(self) -> None:
         import torch
 
-        self.device = select_device(prefer_gpu=True)
+        self.device = select_device(prefer_gpu=True, override=self.params.get("device", "auto"))
         dtype = getattr(torch, self.params.get("dtype", "float32"))
         self.n = int(self.params["size_millions"] * 1_000_000)
         self.a = torch.randn(self.n, dtype=dtype, device=self.device)

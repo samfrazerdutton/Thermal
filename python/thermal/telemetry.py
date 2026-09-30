@@ -290,6 +290,12 @@ class TelemetryCollector:
         return sample
 
     def _loop(self) -> None:
+        # Sample immediately on start, not after the first interval elapses --
+        # otherwise any workload that finishes faster than interval_seconds
+        # (common for small/quick workloads) gets zero samples and the
+        # classifier reports UNKNOWN for every fast run regardless of what
+        # was actually happening on the device.
+        self.sample_once()
         while not self._stop_event.wait(self.interval_seconds):
             self.sample_once()
 

@@ -32,6 +32,7 @@ class BatchSizeScalingWorkload(Workload):
             "in_features": 4096,
             "out_features": 4096,
             "dtype": "float32",
+            "device": "auto",
         },
         warmup_iterations=3,
         measurement_iterations=10,
@@ -41,7 +42,7 @@ class BatchSizeScalingWorkload(Workload):
     def setup(self) -> None:
         import torch
 
-        self.device = select_device(prefer_gpu=True)
+        self.device = select_device(prefer_gpu=True, override=self.params.get("device", "auto"))
         dtype = getattr(torch, self.params.get("dtype", "float32"))
 
         self.batch_size = int(self.params["batch_size"])

@@ -31,6 +31,7 @@ class KVCacheStressWorkload(Workload):
             "head_dim": 64,
             "batch_size": 1,
             "dtype": "float32",
+            "device": "auto",
         },
         warmup_iterations=3,
         measurement_iterations=10,
@@ -40,7 +41,7 @@ class KVCacheStressWorkload(Workload):
     def setup(self) -> None:
         import torch
 
-        self.device = select_device(prefer_gpu=True)
+        self.device = select_device(prefer_gpu=True, override=self.params.get("device", "auto"))
         dtype = getattr(torch, self.params.get("dtype", "float32"))
 
         batch = int(self.params["batch_size"])

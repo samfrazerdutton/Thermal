@@ -9,6 +9,7 @@ import { ExperimentDetail } from "./pages/ExperimentDetail";
 import { Experiments } from "./pages/Experiments";
 import { Genome } from "./pages/Genome";
 import { Hardware } from "./pages/Hardware";
+import { Investigate } from "./pages/Investigate";
 import { Jobs } from "./pages/Jobs";
 import { Reports } from "./pages/Reports";
 import { RunDetail } from "./pages/RunDetail";
@@ -22,6 +23,7 @@ createRoot(document.getElementById("root")!).render(
       <Routes>
         <Route element={<Shell />}>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/investigate" element={<Investigate />} />
           <Route path="/runs" element={<Runs />} />
           <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/diagnosis/:id" element={<RunDetail focusDiagnosis />} />

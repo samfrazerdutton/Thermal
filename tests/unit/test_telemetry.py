@@ -49,6 +49,21 @@ def test_start_stop_collects_multiple_samples(collector):
     assert len(collector.samples) >= 2
 
 
+def test_start_samples_immediately_for_workloads_shorter_than_interval():
+    """Regression test: found via live UI testing. A workload that finishes
+    faster than interval_seconds (routine for small/quick workloads) used to
+    get zero samples because the collector waited a full interval before its
+    first sample_once() call -- so the bottleneck classifier reported UNKNOWN
+    for every fast run, not because nothing could be measured, but because of
+    this timing bug. The first sample must be available essentially
+    immediately after start()."""
+    c = TelemetryCollector(interval_seconds=5.0)
+    c.start()
+    time.sleep(0.05)
+    c.stop()
+    assert len(c.samples) >= 1
+
+
 def test_double_start_raises(collector):
     collector.start()
     with pytest.raises(RuntimeError):

@@ -9,6 +9,7 @@ metrics it actually measured, including which device it actually ran on
 
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
@@ -110,7 +111,7 @@ def run_workload(
     """
     def emit(name: str, payload: dict[str, Any]) -> None:
         if on_event is not None:
-            on_event(name, payload)
+            on_event(name, {"timestamp_ns": time.time_ns(), **payload})
 
     workload.setup()
     try:

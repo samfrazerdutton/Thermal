@@ -171,6 +171,34 @@ export interface CausalEdge {
   };
 }
 
+export interface ExperimentRunRequestBody {
+  workload_name: string;
+  baseline_params: Record<string, unknown>;
+  treatment_params: Record<string, unknown>;
+  metric_name: string;
+  higher_is_better: boolean;
+  repetitions: number;
+  warmup_iterations: number;
+  hypothesis: string;
+}
+
+export interface Intervention {
+  intervention_type: string;
+  description: string;
+  actionable: boolean;
+  reason_not_actionable: string | null;
+  independent_variable: string;
+  dependent_variable: string;
+  proposed_treatment_params: Record<string, unknown> | null;
+  experiment_request: ExperimentRunRequestBody | null;
+}
+
+export interface InterventionsResponse {
+  run_id: string;
+  bottleneck: string;
+  interventions: Intervention[];
+}
+
 export interface JobRecord {
   job_id: string;
   kind: string;
@@ -207,6 +235,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  submitExperimentJob: (body: ExperimentRunRequestBody) =>
+    request<{ job_id: string; status: string }>("/jobs/experiments/run", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  interventions: (runId: string) => request<InterventionsResponse>(`/runs/${runId}/interventions`),
 };
 
 function toQuery(params?: Record<string, unknown>): string {

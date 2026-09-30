@@ -68,6 +68,24 @@ def test_workload_ws_unknown_workload_returns_error_event(client):
     assert events[-1] == "error"
 
 
+def test_workload_ws_reports_error_for_exception_types_beyond_the_original_allowlist(client):
+    """Regression test: found by hand during frontend testing. A bad dtype
+    string reaches getattr(torch, dtype_str) inside the workload and raises
+    AttributeError, not KeyError/ValueError/UnsupportedHardwareError -- the
+    original exception handler only caught those three, so this class of
+    failure silently ended the stream with no "error" event at all, leaving a
+    client waiting forever. Must now surface as an honest error event."""
+    with client.websocket_connect("/api/ws/workloads/run") as ws:
+        ws.send_text(json.dumps({"workload_name": "matmul", "params": {"size": 32, "dtype": "not_a_real_dtype"}}))
+        events = []
+        while True:
+            msg = ws.receive_json()
+            events.append(msg["event"])
+            if msg["event"] in ("result", "error"):
+                break
+    assert events[-1] == "error"
+
+
 def test_experiment_ws_streams_start_and_finish(client):
     with client.websocket_connect("/api/ws/experiments/run") as ws:
         ws.send_text(

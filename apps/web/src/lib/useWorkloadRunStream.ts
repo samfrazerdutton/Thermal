@@ -48,6 +48,21 @@ export function useWorkloadRunStream() {
       setError("connection error");
       setStatus("error");
     };
+
+    socket.onclose = () => {
+      // A clean finish already set status to "done"/"error" via onmessage
+      // before the server closes the socket -- if we're still "connecting"
+      // or "running" here, the connection dropped (network issue, server
+      // restart, crash) without ever telling us the run's outcome. Surface
+      // that instead of leaving the UI stuck showing "running" forever.
+      setStatus((current) => {
+        if (current === "connecting" || current === "running") {
+          setError("Connection to the server was lost before the run finished.");
+          return "error";
+        }
+        return current;
+      });
+    };
   }
 
   return { status, events, result, error, start };

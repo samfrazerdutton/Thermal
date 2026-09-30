@@ -22,7 +22,7 @@ class MemoryBandwidthWorkload(Workload):
         version="1.0.0",
         description="Large-buffer copy (a[:] = b), reports achieved bandwidth in GB/s.",
         hardware_requirements=HardwareRequirement(gpu_required=False),
-        default_parameters={"size_mb": 256, "dtype": "float32"},
+        default_parameters={"size_mb": 256, "dtype": "float32", "device": "auto"},
         warmup_iterations=3,
         measurement_iterations=10,
         output_metrics=("duration_seconds", "bandwidth_gbps"),
@@ -31,7 +31,7 @@ class MemoryBandwidthWorkload(Workload):
     def setup(self) -> None:
         import torch
 
-        self.device = select_device(prefer_gpu=True)
+        self.device = select_device(prefer_gpu=True, override=self.params.get("device", "auto"))
         dtype = getattr(torch, self.params.get("dtype", "float32"))
         bytes_per_elem = torch.tensor([], dtype=dtype).element_size()
         self.num_elements = int(self.params["size_mb"] * 1024 * 1024 / bytes_per_elem)

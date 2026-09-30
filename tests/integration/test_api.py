@@ -279,3 +279,53 @@ def test_list_jobs_includes_submitted_job(client):
 
     listing = client.get("/api/jobs").json()
     assert any(j["job_id"] == job_id for j in listing)
+
+
+def test_interventions_endpoint_404_for_missing_run(client):
+    response = client.get("/api/runs/does-not-exist/interventions")
+    assert response.status_code == 404
+
+
+def test_interventions_endpoint_returns_actionable_experiment_request(client):
+    run_response = client.post(
+        "/api/workloads/run",
+        json={"workload_name": "matmul", "params": {"size": 512}, "samples": 5, "warmup": 1},
+    )
+    run_id = run_response.json()["run"]["run_id"]
+
+    response = client.get(f"/api/runs/{run_id}/interventions")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run_id"] == run_id
+    assert body["bottleneck"]
+    assert isinstance(body["interventions"], list)
+
+    actionable = [i for i in body["interventions"] if i["actionable"]]
+    if actionable:
+        req = actionable[0]["experiment_request"]
+        assert req["workload_name"] == "matmul"
+        assert req["baseline_params"]
+        assert req["treatment_params"] != req["baseline_params"]
+        assert req["metric_name"]
+
+        # the whole point: this request must be directly POST-able
+        submit = client.post("/api/jobs/experiments/run", json=req)
+        assert submit.status_code == 202
+
+
+def test_interventions_endpoint_marks_non_actionable_with_reason(client):
+    """cpu_gpu_transfer has no size-like parameter, so an increase_batch_size-style
+    hypothesis (if the bottleneck triggers one) must say why it isn't actionable
+    rather than proposing an experiment it can't actually run."""
+    run_response = client.post(
+        "/api/workloads/run",
+        json={"workload_name": "kv_cache_stress", "params": {"kv_cache_length": 64}, "samples": 5, "warmup": 1},
+    )
+    run_id = run_response.json()["run"]["run_id"]
+
+    response = client.get(f"/api/runs/{run_id}/interventions")
+    assert response.status_code == 200
+    for intervention in response.json()["interventions"]:
+        if not intervention["actionable"]:
+            assert intervention["reason_not_actionable"]
+            assert intervention["experiment_request"] is None

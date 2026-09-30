@@ -13,7 +13,7 @@ import typer
 
 from analysis.baseline import InsufficientSamplesError, compute_baseline
 from thermal.causal import build_graph_from_experiments
-from thermal.counterfactual import experiment_command_for, generate_hypotheses
+from thermal.counterfactual import experiment_command_for, generate_hypotheses, infer_primary_metric
 from thermal.diagnosis import BottleneckClass
 from thermal.distributed import run_workload_multiprocess
 from thermal.doctor import CheckStatus, core_ready, run_doctor
@@ -40,7 +40,7 @@ from thermal.storage import (
     default_db_path,
 )
 from thermal.telemetry import TelemetryCollector
-from thermal.workload import WorkloadRegistry
+from thermal.workload import UnsupportedHardwareError, WorkloadRegistry
 
 import workloads  # noqa: F401  (import registers all built-in workloads)
 
@@ -65,27 +65,6 @@ def _parse_params(param: list[str]) -> dict:
         key, value = item.split("=", 1)
         params[key] = _parse_scalar(value)
     return params
-
-
-_LOWER_IS_BETTER_HINTS = ("duration", "latency", "time_ms", "time_seconds", "elapsed")
-_HIGHER_IS_BETTER_HINTS = ("gflops", "throughput", "bandwidth", "tokens_per_sec", "gbps")
-
-
-def _infer_primary_metric(metrics: dict) -> tuple[Optional[str], bool]:
-    """Pick the metric most useful to optimize and its direction, from naming
-    convention -- e.g. duration_seconds is lower-is-better, gflops is higher-
-    is-better. Falls back to the first metric, assumed higher-is-better, when
-    the name gives no hint (explicit is better than guessing, but a workload
-    author who follows the convention gets this right automatically)."""
-    for name in metrics:
-        lowered = name.lower()
-        if any(hint in lowered for hint in _HIGHER_IS_BETTER_HINTS):
-            return name, True
-    for name in metrics:
-        lowered = name.lower()
-        if any(hint in lowered for hint in _LOWER_IS_BETTER_HINTS):
-            return name, False
-    return (next(iter(metrics), None), True)
 
 
 def _git_commit() -> Optional[str]:
@@ -189,6 +168,9 @@ def workload_run(
         outcome = run_and_store_workload(name, params, samples=samples, warmup=warmup)
     except KeyError as exc:
         typer.echo(str(exc))
+        raise typer.Exit(code=1)
+    except (ValueError, UnsupportedHardwareError) as exc:
+        typer.echo(f"Cannot run '{name}' with these parameters: {exc}")
         raise typer.Exit(code=1)
 
     record = outcome.record
@@ -613,7 +595,7 @@ def diagnose(run_id: str = typer.Argument("latest", help="run id, or 'latest'"))
     except KeyError:
         known_params = set()
 
-    metric_name, higher_is_better = _infer_primary_metric(run.metrics)
+    metric_name, higher_is_better = infer_primary_metric(run.metrics)
     if metric_name is not None and known_params:
         bottleneck = BottleneckClass(run.diagnosis["bottleneck"])
         hypotheses = generate_hypotheses(bottleneck, run.configuration, known_params)

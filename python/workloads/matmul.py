@@ -22,7 +22,7 @@ class MatMulWorkload(Workload):
         version="1.0.0",
         description="Dense matrix multiplication (N x N), reports achieved GFLOP/s.",
         hardware_requirements=HardwareRequirement(gpu_required=False),
-        default_parameters={"size": 1024, "dtype": "float32"},
+        default_parameters={"size": 1024, "dtype": "float32", "device": "auto"},
         warmup_iterations=3,
         measurement_iterations=10,
         output_metrics=("duration_seconds", "gflops"),
@@ -31,7 +31,7 @@ class MatMulWorkload(Workload):
     def setup(self) -> None:
         import torch
 
-        self.device = select_device(prefer_gpu=True)
+        self.device = select_device(prefer_gpu=True, override=self.params.get("device", "auto"))
         self.size = int(self.params["size"])
         dtype = getattr(torch, self.params.get("dtype", "float32"))
         self.a = torch.randn(self.size, self.size, dtype=dtype, device=self.device)

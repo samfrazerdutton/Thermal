@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Optional
 
@@ -67,7 +68,7 @@ def run_and_store_workload(
 ) -> WorkloadRunOutcome:
     def emit(name: str, payload: dict[str, Any]) -> None:
         if on_event is not None:
-            on_event(name, payload)
+            on_event(name, {"timestamp_ns": time.time_ns(), **payload})
 
     workload_cls = WorkloadRegistry.get(workload_name)
     instance = workload_cls(params)
@@ -171,7 +172,7 @@ def run_and_store_experiment(
 ) -> ExperimentRunOutcome:
     def emit(name: str, payload: dict[str, Any]) -> None:
         if on_event is not None:
-            on_event(name, payload)
+            on_event(name, {"timestamp_ns": time.time_ns(), **payload})
 
     spec = ExperimentSpec(
         workload_name=workload_name,

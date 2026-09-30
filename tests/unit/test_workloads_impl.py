@@ -41,7 +41,46 @@ def test_workload_runs_and_reports_real_device(name, params):
         assert metric["duration_seconds"] > 0
 
 
+@pytest.mark.parametrize("name", ["matmul", "memory_bandwidth", "vector_ops", "batch_size_scaling"])
+def test_workload_device_param_forces_cpu_even_when_gpu_available(name):
+    workload_cls = WorkloadRegistry.get(name)
+    params = {"device": "cpu"}
+    if name == "matmul":
+        params["size"] = 32
+    elif name == "memory_bandwidth":
+        params["size_mb"] = 1
+    elif name == "vector_ops":
+        params["size_millions"] = 1
+    elif name == "batch_size_scaling":
+        params.update(batch_size=4, in_features=64, out_features=64)
+
+    instance = workload_cls(params)
+    instance.spec = instance.spec.__class__(
+        **{**instance.spec.__dict__, "warmup_iterations": 1, "measurement_iterations": 2}
+    )
+    result = run_workload(instance)
+    assert result.device == "cpu"
+
+
 requires_gpu = pytest.mark.skipif(not gpu_available(), reason="cpu_gpu_transfer/compression_vs_transfer need a real CUDA device")
+
+
+@requires_gpu
+def test_workload_device_param_forces_cuda_when_requested():
+    workload_cls = WorkloadRegistry.get("matmul")
+    instance = workload_cls({"size": 32, "device": "cuda:0"})
+    instance.spec = instance.spec.__class__(
+        **{**instance.spec.__dict__, "warmup_iterations": 1, "measurement_iterations": 2}
+    )
+    result = run_workload(instance)
+    assert result.device == "cuda:0"
+
+
+def test_workload_device_param_invalid_raises_value_error():
+    workload_cls = WorkloadRegistry.get("matmul")
+    instance = workload_cls({"size": 32, "device": "not_a_real_device"})
+    with pytest.raises(ValueError):
+        instance.setup()
 
 
 @requires_gpu

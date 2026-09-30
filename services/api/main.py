@@ -37,13 +37,15 @@ from fastapi.responses import PlainTextResponse
 from api.schemas import ExperimentRunRequest, OptimizeGridSearchRequest, WorkloadRunRequest
 from thermal.ai import AIExplainer, explain_record
 from thermal.causal import build_graph_from_experiments
+from thermal.counterfactual import experiment_request_for, generate_hypotheses, infer_primary_metric
+from thermal.diagnosis import BottleneckClass
 from thermal.hardware import collect_hardware_report
 from thermal.jobs import JobQueue
 from thermal.optimization import grid_search
 from thermal.report import generate_report
 from thermal.runner import run_and_store_experiment, run_and_store_workload
 from thermal.storage import ExperimentRepository, SQLiteRunRepository, default_db_path
-from thermal.workload import WorkloadRegistry
+from thermal.workload import UnsupportedHardwareError, WorkloadRegistry
 
 import workloads  # noqa: F401  (registers built-in workloads)
 
@@ -143,6 +145,8 @@ def run_workload_endpoint(request: WorkloadRunRequest) -> dict:
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except (ValueError, UnsupportedHardwareError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     return {
         "run": _run_record_to_dict(outcome.record),
@@ -167,7 +171,14 @@ async def _stream_events(websocket: WebSocket, blocking_call, already_accepted: 
         try:
             final = blocking_call(on_event)
             loop.call_soon_threadsafe(queue.put_nowait, {"event": "result", **final})
-        except (KeyError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 -- any failure here must reach the client as an
+            # "error" event, not vanish silently. A narrower allowlist (KeyError,
+            # ValueError, UnsupportedHardwareError) previously let anything else --
+            # e.g. an invalid dtype string reaching getattr(torch, ...) as an
+            # AttributeError -- terminate the stream with no event at all, leaving
+            # a client waiting forever with no indication anything went wrong.
+            # Found by hand: a live browser run that supplied a bad `dtype` value
+            # just stopped after "run started" with no error shown.
             loop.call_soon_threadsafe(queue.put_nowait, {"event": "error", "detail": str(exc)})
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, None)
@@ -321,6 +332,53 @@ def get_diagnosis(run_id: str) -> dict:
     if not record.diagnosis:
         raise HTTPException(status_code=404, detail=f"run {run_id} has no stored diagnosis")
     return record.diagnosis
+
+
+@app.get("/api/runs/{run_id}/interventions")
+def get_interventions(run_id: str) -> dict:
+    """The counterfactual engine (thermal/counterfactual.py), previously only
+    reachable through `thermal diagnose` on the CLI. Every actionable entry
+    carries a ready-to-submit experiment_request -- POST it straight to
+    /api/jobs/experiments/run to test the hypothesis, no copy-pasting a shell
+    command required."""
+    repo = SQLiteRunRepository(default_db_path())
+    record = repo.get(run_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"no run found with id {run_id}")
+    if not record.diagnosis:
+        raise HTTPException(status_code=404, detail=f"run {run_id} has no stored diagnosis")
+
+    try:
+        workload_cls = WorkloadRegistry.get(record.workload_name)
+        known_params = set(workload_cls.spec.default_parameters.keys())
+    except KeyError:
+        known_params = set()
+
+    metric_name, higher_is_better = infer_primary_metric(record.metrics)
+    bottleneck = BottleneckClass(record.diagnosis["bottleneck"])
+
+    if metric_name is None or not known_params:
+        return {"run_id": run_id, "bottleneck": bottleneck.value, "interventions": []}
+
+    hypotheses = generate_hypotheses(bottleneck, record.configuration, known_params)
+    interventions = []
+    for h in hypotheses:
+        interventions.append(
+            {
+                "intervention_type": h.intervention_type,
+                "description": h.description,
+                "actionable": h.actionable,
+                "reason_not_actionable": h.reason_not_actionable,
+                "independent_variable": h.independent_variable,
+                "dependent_variable": h.dependent_variable,
+                "proposed_treatment_params": h.proposed_treatment_params,
+                "experiment_request": experiment_request_for(
+                    h, record.workload_name, record.configuration, metric_name, higher_is_better
+                ),
+            }
+        )
+
+    return {"run_id": run_id, "bottleneck": bottleneck.value, "interventions": interventions}
 
 
 @app.post("/api/experiments")
