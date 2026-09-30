@@ -1,14 +1,22 @@
 """THERMAL FastAPI service.
 
-Local single-user mode: no auth, SQLite storage. POST /api/workloads/run and
-POST /api/experiments still block until the run finishes (fine for short
-runs, and simple to reason about); the WebSocket endpoints below
-(/api/ws/workloads/run, /api/ws/experiments/run) are Phase 14's answer for
-watching a longer run live, streaming the same events thermal.runner emits
-(run_started, warmup_started, iteration_completed, telemetry_update,
-diagnosis_updated, run_completed, ...) as they happen -- there still isn't a
-background job queue (Phase 18), so a run is still tied to one open
-connection; closing it doesn't cancel the run, it just stops watching it.
+Local single-user mode: no auth, SQLite storage. Three ways to start a run,
+depending on what the caller needs:
+
+  POST /api/workloads/run, /api/experiments      blocks until done; simplest
+  /api/ws/workloads/run, /api/ws/experiments/run  streams live events (Phase 14);
+                                                   still tied to one open connection
+  POST /api/jobs/workloads/run, /api/jobs/experiments/run   returns a job_id
+                                                   immediately (202); the run
+                                                   continues in a background
+                                                   thread even if the caller
+                                                   disconnects -- poll
+                                                   GET /api/jobs/{id} for status
+
+The job queue (thermal/jobs.py) is an in-process thread pool, not a separate
+worker service or message broker -- true distributed workers are out of scope
+for local mode (see services/README.md). Jobs persist to SQLite, so their
+status survives a server restart and is inspectable like any other record.
 
 Every endpoint here calls the exact same code the CLI calls
 (thermal.runner, thermal.storage, thermal.diagnosis, thermal.causal) so a
@@ -30,6 +38,7 @@ from api.schemas import ExperimentRunRequest, OptimizeGridSearchRequest, Workloa
 from thermal.ai import AIExplainer, explain_record
 from thermal.causal import build_graph_from_experiments
 from thermal.hardware import collect_hardware_report
+from thermal.jobs import JobQueue
 from thermal.optimization import grid_search
 from thermal.report import generate_report
 from thermal.runner import run_and_store_experiment, run_and_store_workload
@@ -47,6 +56,8 @@ app = FastAPI(
     ),
     version="0.1.0",
 )
+
+job_queue = JobQueue()
 
 
 def _diagnosis_to_dict(diagnosis) -> dict:
@@ -232,6 +243,58 @@ async def ws_run_experiment(websocket: WebSocket) -> None:
         return {"experiment": _experiment_record_to_dict(outcome.record)}
 
     await _stream_events(websocket, blocking_call, already_accepted=True)
+
+
+def _job_to_dict(job) -> dict:
+    return {
+        "job_id": job.job_id,
+        "kind": job.kind,
+        "status": job.status,
+        "created_at_ns": job.created_at_ns,
+        "started_at_ns": job.started_at_ns,
+        "finished_at_ns": job.finished_at_ns,
+        "request": job.request,
+        "result": job.result,
+        "error": job.error,
+    }
+
+
+@app.post("/api/jobs/workloads/run", status_code=202)
+def submit_workload_job(request: WorkloadRunRequest) -> dict:
+    """Returns immediately with a job_id; the run continues in a background
+    thread even if the caller disconnects. Poll GET /api/jobs/{job_id}."""
+    job_id = job_queue.submit_workload_run(
+        request.workload_name, request.params, samples=request.samples, warmup=request.warmup
+    )
+    return {"job_id": job_id, "status": "pending"}
+
+
+@app.post("/api/jobs/experiments/run", status_code=202)
+def submit_experiment_job(request: ExperimentRunRequest) -> dict:
+    job_id = job_queue.submit_experiment_run(
+        workload_name=request.workload_name,
+        baseline_params=request.baseline_params,
+        treatment_params=request.treatment_params,
+        metric_name=request.metric_name,
+        higher_is_better=request.higher_is_better,
+        repetitions=request.repetitions,
+        warmup_iterations=request.warmup_iterations,
+        hypothesis=request.hypothesis,
+    )
+    return {"job_id": job_id, "status": "pending"}
+
+
+@app.get("/api/jobs")
+def list_jobs(status: Optional[str] = None, limit: int = 50) -> list[dict]:
+    return [_job_to_dict(j) for j in job_queue.list_jobs(status=status, limit=limit)]
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str) -> dict:
+    job = job_queue.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"no job found with id {job_id}")
+    return _job_to_dict(job)
 
 
 @app.get("/api/runs")

@@ -171,6 +171,18 @@ export interface CausalEdge {
   };
 }
 
+export interface JobRecord {
+  job_id: string;
+  kind: string;
+  status: "pending" | "running" | "completed" | "failed";
+  created_at_ns: number;
+  started_at_ns: number | null;
+  finished_at_ns: number | null;
+  request: Record<string, unknown>;
+  result: Record<string, unknown> | null;
+  error: string | null;
+}
+
 export const api = {
   health: () => request<{ status: string }>("/health"),
   hardware: () => request<HardwareReport>("/hardware"),
@@ -188,6 +200,13 @@ export const api = {
   experiment: (id: string) => request<ExperimentRecord>(`/experiments/${id}`),
   causalGraph: (workload?: string) =>
     request<{ edges: CausalEdge[] }>(`/causal-graph${toQuery({ workload })}`),
+  jobs: (params?: { status?: string; limit?: number }) => request<JobRecord[]>(`/jobs${toQuery(params)}`),
+  job: (id: string) => request<JobRecord>(`/jobs/${id}`),
+  submitWorkloadJob: (body: { workload_name: string; params?: Record<string, unknown>; samples?: number; warmup?: number }) =>
+    request<{ job_id: string; status: string }>("/jobs/workloads/run", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };
 
 function toQuery(params?: Record<string, unknown>): string {

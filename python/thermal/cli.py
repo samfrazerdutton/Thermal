@@ -34,6 +34,7 @@ from thermal.native_bench import (
 from thermal.runner import run_and_store_experiment, run_and_store_workload
 from thermal.storage import (
     ExperimentRepository,
+    JobRepository,
     RunRecord,
     SQLiteRunRepository,
     default_db_path,
@@ -491,6 +492,43 @@ def serve(
 
     typer.echo(f"THERMAL API: http://{host}:{port}/docs")
     uvicorn.run("api.main:app", host=host, port=port, reload=reload)
+
+
+job_app = typer.Typer(
+    help="Inspect background jobs submitted through the API's job queue (POST /api/jobs/...).",
+    no_args_is_help=True,
+)
+app.add_typer(job_app, name="job")
+
+
+@job_app.command("list")
+def job_list(status: Optional[str] = typer.Option(None, "--status"), limit: int = typer.Option(20, "--limit")) -> None:
+    """List background jobs, most recent first. The CLI itself always runs jobs
+    synchronously (`thermal workload run` blocks like any normal CLI command) --
+    this is for inspecting jobs submitted asynchronously through the API."""
+    jobs = JobRepository(default_db_path()).list(status=status, limit=limit)
+    if not jobs:
+        typer.echo("No jobs found.")
+        return
+    for job in jobs:
+        typer.echo(f"{job.job_id}  {job.kind:<16} status={job.status:<10}")
+
+
+@job_app.command("show")
+def job_show(job_id: str) -> None:
+    """Show full detail for one background job."""
+    job = JobRepository(default_db_path()).get(job_id)
+    if job is None:
+        typer.echo(f"No job found with id {job_id}")
+        raise typer.Exit(code=1)
+    typer.echo(f"Job: {job.job_id}")
+    typer.echo(f"Kind: {job.kind}")
+    typer.echo(f"Status: {job.status}")
+    typer.echo(f"Request: {job.request}")
+    if job.result is not None:
+        typer.echo(f"Result: {job.result}")
+    if job.error is not None:
+        typer.echo(f"Error: {job.error}")
 
 
 database_app = typer.Typer(help="Inspect stored runs (SQLite local mode).", no_args_is_help=True)

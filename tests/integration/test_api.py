@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 def client(tmp_path, monkeypatch):
     db_path = tmp_path / "thermal.sqlite3"
 
+    import thermal.jobs as jobs_mod
     import thermal.report as report_mod
     import thermal.runner as runner_mod
     import thermal.storage as storage_mod
@@ -21,6 +22,11 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(storage_mod, "default_db_path", lambda: db_path)
     monkeypatch.setattr(runner_mod, "default_db_path", lambda: db_path)
     monkeypatch.setattr(report_mod, "default_db_path", lambda: db_path)
+    # job_queue is a module-level singleton in api.main constructed at import
+    # time; its _repo() re-resolves default_db_path() on every call (rather
+    # than caching it), which is exactly what makes patching it here -- after
+    # that singleton already exists -- take effect.
+    monkeypatch.setattr(jobs_mod, "default_db_path", lambda: db_path)
 
     import api.main as api_main
 
@@ -173,3 +179,103 @@ def test_explain_endpoint_returns_503_when_ai_not_configured(client, monkeypatch
     response = client.get("/api/explain/some-id")
     assert response.status_code == 503
     assert "ANTHROPIC_API_KEY" in response.json()["detail"]
+
+
+def _wait_for_job(client, job_id, timeout=30.0):
+    import time
+
+    deadline = time.perf_counter() + timeout
+    while time.perf_counter() < deadline:
+        job = client.get(f"/api/jobs/{job_id}").json()
+        if job["status"] in ("completed", "failed"):
+            return job
+        time.sleep(0.1)
+    raise TimeoutError(f"job {job_id} did not finish within {timeout}s")
+
+
+def test_submit_workload_job_returns_202_immediately(client):
+    response = client.post(
+        "/api/jobs/workloads/run",
+        json={"workload_name": "vector_ops", "params": {"size_millions": 1}, "samples": 4, "warmup": 1},
+    )
+    assert response.status_code == 202
+    body = response.json()
+    assert body["status"] == "pending"
+    assert body["job_id"]
+
+
+def test_workload_job_completes_and_is_pollable(client):
+    submit = client.post(
+        "/api/jobs/workloads/run",
+        json={"workload_name": "vector_ops", "params": {"size_millions": 1}, "samples": 4, "warmup": 1},
+    )
+    job_id = submit.json()["job_id"]
+
+    job = _wait_for_job(client, job_id)
+    assert job["status"] == "completed"
+    assert job["result"]["run_id"]
+
+    # the run the job produced is a real, independently fetchable run record
+    run_response = client.get(f"/api/runs/{job['result']['run_id']}")
+    assert run_response.status_code == 200
+
+
+def test_server_stays_responsive_while_a_job_runs(client):
+    """The whole point of the job queue: submitting a run must not block the
+    server from answering other requests while that run is in progress."""
+    submit = client.post(
+        "/api/jobs/workloads/run",
+        json={"workload_name": "matmul", "params": {"size": 4096}, "samples": 10, "warmup": 2},
+    )
+    job_id = submit.json()["job_id"]
+
+    health = client.get("/api/health")
+    assert health.status_code == 200
+
+    job = client.get(f"/api/jobs/{job_id}").json()
+    assert job["status"] in ("pending", "running", "completed")
+
+    _wait_for_job(client, job_id)
+
+
+def test_experiment_job_completes(client):
+    submit = client.post(
+        "/api/jobs/experiments/run",
+        json={
+            "workload_name": "matmul",
+            "baseline_params": {"size": 64},
+            "treatment_params": {"size": 128},
+            "metric_name": "gflops",
+            "repetitions": 6,
+            "warmup_iterations": 1,
+        },
+    )
+    assert submit.status_code == 202
+    job = _wait_for_job(client, submit.json()["job_id"])
+    assert job["status"] == "completed"
+    assert job["result"]["verdict"] in ("IMPROVED", "REGRESSED", "INCONCLUSIVE", "NO_CHANGE")
+
+
+def test_unknown_workload_job_fails_not_500(client):
+    submit = client.post("/api/jobs/workloads/run", json={"workload_name": "__does_not_exist__"})
+    assert submit.status_code == 202  # accepted -- failure is discovered asynchronously
+    job = _wait_for_job(client, submit.json()["job_id"])
+    assert job["status"] == "failed"
+    assert job["error"]
+
+
+def test_get_missing_job_returns_404(client):
+    response = client.get("/api/jobs/does-not-exist")
+    assert response.status_code == 404
+
+
+def test_list_jobs_includes_submitted_job(client):
+    submit = client.post(
+        "/api/jobs/workloads/run",
+        json={"workload_name": "vector_ops", "params": {"size_millions": 1}, "samples": 4, "warmup": 1},
+    )
+    job_id = submit.json()["job_id"]
+    _wait_for_job(client, job_id)
+
+    listing = client.get("/api/jobs").json()
+    assert any(j["job_id"] == job_id for j in listing)

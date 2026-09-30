@@ -66,7 +66,7 @@ Implemented, phase by phase:
 - **Phase 9 — Counterfactual engine** (`thermal diagnose` now proposes a testable hypothesis with the exact `thermal experiment run` command to test it)
 - **Phase 10 — Causal graph** (`thermal experiment causal-graph`; edges only come from experiments whose CI excluded zero, tagged EXPERIMENTAL_EVIDENCE — never asserted from correlation alone)
 - **Phase 11 — Optimization search** (`thermal optimize`; grid search and coordinate descent, each candidate a real controlled experiment — never picks a candidate whose verdict wasn't IMPROVED)
-- **Phase 12 — FastAPI service** (`thermal serve`; `/api/health`, `/api/hardware`, `/api/workloads`, `/api/runs`, `/api/experiments`, `/api/diagnoses`, `/api/causal-graph`, `/api/optimize/grid-search` — every endpoint calls the same `thermal.runner` code the CLI calls, so a run triggered from the API and one from the CLI are computed identically)
+- **Phase 12 — FastAPI service** (`thermal serve`; `/api/health`, `/api/hardware`, `/api/workloads`, `/api/runs`, `/api/experiments`, `/api/diagnoses`, `/api/causal-graph`, `/api/optimize/grid-search`, plus a background job queue at `/api/jobs/...` — every endpoint calls the same `thermal.runner` code the CLI calls, so a run triggered from the API and one from the CLI are computed identically)
 - **Phase 13 — Web console** (`apps/web`; React/TypeScript/Vite/Tailwind, dark instrument-panel design, live against the real API — no mock data path)
 - **Phase 14 — Live experiment streaming** (`/api/ws/workloads/run`, `/api/ws/experiments/run`; a run started from the Workloads page streams real events — run_started, warmup, iteration_completed, telemetry_update, diagnosis_updated, run_completed — over a WebSocket as they happen, verified end-to-end with a real browser click-through)
 - **Phase 15 — Report generation** (`thermal report <run_id|experiment_id>`, `GET /api/reports/:id`, and a Reports page in the web console — a Markdown report built entirely from what was already recorded, never recomputed, including a literal reproduction command)
@@ -193,9 +193,16 @@ Documented honestly rather than hidden:
   loading the MSVC environment) because this machine's CUDA install has no Visual
   Studio integration — `scripts/build-native.ps1` automates it. See
   `docs/environment-report.md` for the full finding.
-- The API's POST endpoints and CLI runs execute synchronously; the WebSocket streaming
-  endpoints (Phase 14) don't change that — there is still no background job queue, so
-  a run is tied to one open connection/request.
+- ~~There is no background job queue~~ **Fixed**: `POST /api/jobs/workloads/run` and
+  `POST /api/jobs/experiments/run` return a `job_id` immediately (202) and run on an
+  in-process thread pool (`thermal/jobs.py`), so the run continues even if the caller
+  disconnects — poll `GET /api/jobs/{id}` or check the web console's Jobs page. Verified
+  for real: submitted a run, then hit `/api/health` and `/api/hardware` while it was
+  still `"running"` and got immediate responses. This is a thread pool inside the API
+  process, not a separate worker service or message broker — see `services/README.md`
+  for what a true distributed version would need. The plain `POST /api/workloads/run`
+  and the WebSocket streaming endpoints (Phase 14) are both still there too, for when
+  blocking or live streaming is what's actually wanted.
 - The optional AI layer (Phase 16) requires `ANTHROPIC_API_KEY`; without it, `thermal
   explain` and `GET /api/explain/:id` say so and exit/return non-success rather than
   silently doing nothing.

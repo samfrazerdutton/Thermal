@@ -36,10 +36,12 @@ on a different port (see `vite.config.ts`).
 | `/runs`, `/runs/:id` | Stored runs and full baseline + diagnosis detail |
 | `/diagnosis/:id` | Same detail, diagnosis-first |
 | `/experiments`, `/experiments/:id` | Stored experiments; detail view includes the raw per-trial scatter plot, not just the headline percentage |
-| `/workloads` | Registered workload plugins and their parameters |
+| `/jobs` | Background jobs submitted via `POST /api/jobs/...` (the async, poll-for-status alternative to the blocking and WebSocket-streaming run paths) |
+| `/workloads` | Registered workload plugins and their parameters; includes a live "run" button that streams a run over `/api/ws/workloads/run` |
 | `/hardware` | Live hardware/toolchain capabilities from `/api/hardware` |
 | `/benchmarks` | Runs grouped by workload (full cross-GPU/optimization comparison is Phase 33) |
-| `/genome`, `/reports` | Honest "not implemented" pages (Phases 23 and 15) |
+| `/reports` | Enter a run or experiment id to generate its Markdown report (`GET /api/reports/:id`) |
+| `/genome` | Honest "not implemented" page (Phase 23) |
 | `/settings` | Local-mode info; nothing configurable yet |
 
 ## Build

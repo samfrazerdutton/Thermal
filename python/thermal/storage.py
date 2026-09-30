@@ -61,6 +61,21 @@ CREATE TABLE IF NOT EXISTS experiments (
 
 CREATE INDEX IF NOT EXISTS idx_experiments_workload ON experiments(workload_name);
 CREATE INDEX IF NOT EXISTS idx_experiments_created_at ON experiments(created_at_ns);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    job_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at_ns INTEGER NOT NULL,
+    started_at_ns INTEGER,
+    finished_at_ns INTEGER,
+    request_json TEXT NOT NULL,
+    result_json TEXT,
+    error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at_ns);
 """
 
 
@@ -365,6 +380,100 @@ class ExperimentRepository:
                     "SELECT * FROM experiments ORDER BY created_at_ns DESC LIMIT ?", (limit,)
                 ).fetchall()
             return [_row_to_experiment(r) for r in rows]
+
+
+@dataclass
+class JobRecord:
+    job_id: str
+    kind: str  # "workload_run" | "experiment_run"
+    status: str  # "pending" | "running" | "completed" | "failed"
+    created_at_ns: int
+    request: dict[str, Any]
+    started_at_ns: Optional[int] = None
+    finished_at_ns: Optional[int] = None
+    result: Optional[dict[str, Any]] = None
+    error: Optional[str] = None
+
+    @classmethod
+    def new(cls, kind: str, request: dict[str, Any]) -> "JobRecord":
+        return cls(job_id=str(uuid.uuid4()), kind=kind, status="pending", created_at_ns=time.time_ns(), request=request)
+
+
+def _row_to_job(row: sqlite3.Row) -> JobRecord:
+    return JobRecord(
+        job_id=row["job_id"],
+        kind=row["kind"],
+        status=row["status"],
+        created_at_ns=row["created_at_ns"],
+        started_at_ns=row["started_at_ns"],
+        finished_at_ns=row["finished_at_ns"],
+        request=json.loads(row["request_json"]),
+        result=json.loads(row["result_json"]) if row["result_json"] else None,
+        error=row["error"],
+    )
+
+
+class JobRepository:
+    """Persisted job records -- durable across server restarts, unlike an
+    in-memory-only queue, and inspectable the same way runs/experiments are
+    (thermal database, the API) rather than being a black box."""
+
+    def __init__(self, db_path: Path) -> None:
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            conn.executescript(SCHEMA_SQL)
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.db_path, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
+    def save(self, job: JobRecord) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO jobs (job_id, kind, status, created_at_ns, started_at_ns, finished_at_ns, request_json, result_json, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(job_id) DO UPDATE SET
+                    status = excluded.status,
+                    started_at_ns = excluded.started_at_ns,
+                    finished_at_ns = excluded.finished_at_ns,
+                    result_json = excluded.result_json,
+                    error = excluded.error
+                """,
+                (
+                    job.job_id,
+                    job.kind,
+                    job.status,
+                    job.created_at_ns,
+                    job.started_at_ns,
+                    job.finished_at_ns,
+                    json.dumps(job.request),
+                    json.dumps(job.result) if job.result is not None else None,
+                    job.error,
+                ),
+            )
+
+    def get(self, job_id: str) -> Optional[JobRecord]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            return _row_to_job(row) if row is not None else None
+
+    def list(self, status: Optional[str] = None, limit: int = 50) -> list[JobRecord]:
+        with self._connect() as conn:
+            if status is not None:
+                rows = conn.execute(
+                    "SELECT * FROM jobs WHERE status = ? ORDER BY created_at_ns DESC LIMIT ?", (status, limit)
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM jobs ORDER BY created_at_ns DESC LIMIT ?", (limit,)).fetchall()
+            return [_row_to_job(r) for r in rows]
 
 
 def default_db_path() -> Path:
